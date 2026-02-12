@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-PXGuard - File Integrity Monitoring (FIM) for Linux.
+PXGuard - CLI entry point.
 
-Entry point: CLI with --init-baseline, --monitor, --simulate-attack.
+Exposed as the 'pxguard' console command via pyproject.toml.
 """
 
 import argparse
@@ -10,9 +10,6 @@ import logging
 import signal
 import sys
 from pathlib import Path
-
-# Project root: directory containing main.py
-PROJECT_ROOT = Path(__file__).resolve().parent
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -28,18 +25,20 @@ def setup_logging(verbose: bool = False) -> None:
 
 def get_config(args: argparse.Namespace) -> dict:
     """Load config from file; config path may be overridden by args."""
-    from core.config_loader import load_config
+    from pxguard.core.config_loader import load_config
 
-    config_path = Path(args.config).resolve()
+    config_path = Path(args.config)
     if not config_path.is_absolute():
-        config_path = PROJECT_ROOT / config_path
-    return load_config(config_path, PROJECT_ROOT)
+        config_path = Path.cwd() / config_path
+    config_path = config_path.resolve()
+    project_root = Path.cwd().resolve()
+    return load_config(config_path, project_root)
 
 
 def cmd_init_baseline(config: dict, dry_run: bool) -> None:
     """Create or overwrite baseline from current directory state."""
-    from core.comparator import BaselineComparator
-    from core.scanner import DirectoryScanner
+    from pxguard.core.comparator import BaselineComparator
+    from pxguard.core.scanner import DirectoryScanner
 
     logging.getLogger(__name__).info("Building baseline...")
     scanner = DirectoryScanner(exclude_patterns=config["exclude_patterns"])
@@ -57,7 +56,7 @@ def cmd_init_baseline(config: dict, dry_run: bool) -> None:
 
 def cmd_monitor(config: dict, dry_run: bool) -> None:
     """Run the FIM monitoring loop with graceful shutdown."""
-    from core.monitor import FileMonitor
+    from pxguard.core.monitor import FileMonitor
 
     shutdown = {"stop": False}
 
@@ -74,27 +73,33 @@ def cmd_monitor(config: dict, dry_run: bool) -> None:
     monitor.run()
 
 
-def cmd_simulate(config: dict) -> None:
+def cmd_simulate(config: dict, args: argparse.Namespace) -> None:
     """Run the ransomware simulator (safe: only in allowed root)."""
-    from simulator.ransomware_simulator import run_simulation
+    from pxguard.simulator.ransomware_simulator import run_simulation
 
+    config_path = Path(args.config)
+    if not config_path.is_absolute():
+        config_path = Path.cwd() / config_path
+    config_path = config_path.resolve()
     run_simulation(
-        project_root=PROJECT_ROOT,
+        project_root=config["project_root"],
         allowed_root=config["simulator_allowed_root"],
-        config_path=PROJECT_ROOT / "config" / "config.yaml",
+        config_path=config_path,
     )
 
 
 def main() -> int:
+    """CLI logic (unchanged from original)."""
+    _default_config = Path(__file__).resolve().parent / "config" / "config.yaml"
     parser = argparse.ArgumentParser(
-        prog="PXGuard",
+        prog="pxguard",
         description="File Integrity Monitoring (FIM) for Linux - detect unauthorized file modifications.",
     )
     parser.add_argument(
         "--config",
         type=str,
-        default=str(PROJECT_ROOT / "config" / "config.yaml"),
-        help="Path to config.yaml",
+        default=str(_default_config),
+        help="Path to config.yaml (default: package config; use CWD-relative or absolute)",
     )
     parser.add_argument(
         "--dry-run",
@@ -125,12 +130,13 @@ def main() -> int:
     elif args.command == "monitor":
         cmd_monitor(config, args.dry_run)
     elif args.command == "simulate-attack":
-        cmd_simulate(config)
+        cmd_simulate(config, args)
     else:
         parser.print_help()
         return 0
     return 0
 
 
-if __name__ == "__main__":
+def cli() -> None:
+    """Entry point for the pxguard console command."""
     sys.exit(main())

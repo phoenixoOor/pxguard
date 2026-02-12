@@ -9,7 +9,7 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from core.hashing import HashEngine
+from pxguard.core.hashing import HashEngine
 
 logger = logging.getLogger(__name__)
 

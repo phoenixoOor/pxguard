@@ -10,7 +10,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Deque
 
-from core.models import FIMEvent, Severity
+from pxguard.core.models import FIMEvent, Severity
 
 logger = logging.getLogger(__name__)
 

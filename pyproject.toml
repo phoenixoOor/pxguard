@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pxguard"
+version = "1.0.0"
+description = "File Integrity Monitoring (FIM) for Linux - detect unauthorized file modifications."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "PyYAML>=6.0",
+]
+
+[project.scripts]
+pxguard = "pxguard.main:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["pxguard", "pxguard.*"]

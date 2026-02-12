@@ -1,0 +1,33 @@
+# PXGuard - File Integrity Monitoring Configuration
+# Author: phoenixoOor
+# Paths are relative to CWD (project root when running pxguard).
+
+monitoring:
+  directories:
+    - ./test_assets
+
+  scan_interval: 30
+
+  exclude_patterns:
+    - "*.log"
+    - "*.tmp"
+    - "*.swp"
+    - ".git/*"
+    - "__pycache__/*"
+    - "*.pyc"
+    - "baseline.json"
+
+thresholds:
+  change_count: 10
+  time_window_seconds: 60
+
+alerts:
+  log_path: ./pxguard/logs/alerts.log
+  console_alerts: true
+  min_severity: INFO
+
+paths:
+  baseline_file: ./pxguard/baseline/baseline.json
+
+simulator:
+  allowed_root: ./test_assets

@@ -26,25 +26,29 @@ A threshold engine raises **CRITICAL** alerts when many changes occur in a short
 ## Architecture
 
 ```
-pxguard/
-├── core/                    # FIM engine
-│   ├── hashing.py           # SHA256 file hashing
-│   ├── scanner.py           # Recursive directory scan + manifest
-│   ├── comparator.py        # Baseline vs current comparison → events
-│   ├── alerts.py            # JSON log + optional console alerts
-│   ├── thresholds.py        # Change-rate → CRITICAL escalation
-│   ├── config_loader.py     # config.yaml load + path resolution
-│   ├── monitor.py           # FileMonitor: scan loop + compare + alert
-│   └── models.py            # FIMEvent, EventType, Severity dataclasses
-├── config/
-│   └── config.yaml          # Directories, interval, exclusions, thresholds
-├── baseline/
-│   └── baseline.json        # Generated: path → { hash, size, last_modified }
-├── logs/
-│   └── alerts.log           # One JSON object per line
-├── simulator/
-│   └── ransomware_simulator.py   # Safe simulation under test dir only
-└── main.py                  # CLI: init-baseline | monitor | simulate-attack
+project_root/
+├── pyproject.toml
+├── README.md
+├── requirements.txt
+├── test_assets/             # Optional; monitored if in config
+└── pxguard/                 # Installable package
+    ├── __init__.py
+    ├── main.py              # CLI entry (pxguard = pxguard.main:cli)
+    ├── core/                # FIM engine
+    │   ├── hashing.py
+    │   ├── scanner.py
+    │   ├── comparator.py
+    │   ├── alerts.py
+    │   ├── thresholds.py
+    │   ├── config_loader.py
+    │   ├── monitor.py
+    │   └── models.py
+    ├── simulator/
+    │   └── ransomware_simulator.py
+    ├── config/
+    │   └── config.yaml      # Default config (paths relative to CWD)
+    ├── baseline/            # Generated baseline.json (when using default config)
+    └── logs/                # Generated alerts.log (when using default config)
 ```
 
 **Data flow**
@@ -71,7 +75,7 @@ Paths in the baseline and current manifest are stored relative to the project ro
 
 ## Configuration
 
-Edit `config/config.yaml`. No hardcoded paths; all paths are relative to the project root unless absolute.
+The package ships a default config at `pxguard/config/config.yaml`. Override with `--config`. Paths in the config are relative to the current working directory (where you run `pxguard`) unless absolute.
 
 - **monitoring.directories**: List of directories to monitor.
 - **monitoring.scan_interval**: Seconds between comparison cycles.
@@ -83,15 +87,37 @@ Edit `config/config.yaml`. No hardcoded paths; all paths are relative to the pro
 
 ---
 
-## How to Run
+## Installation
 
-### 1. Install dependencies
+Install as an editable package so the `pxguard` command is available:
 
 ```bash
-cd pxguard
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -r requirements.txt
+pip install -e .
+```
+
+Then run:
+
+```bash
+pxguard --help
+pxguard init-baseline
+pxguard monitor
+pxguard simulate-attack
+```
+
+Paths in `config/config.yaml` are resolved relative to the **current working directory** (where you run `pxguard`). Run from your project root so that `config/`, `baseline/`, and `logs/` resolve correctly.
+
+---
+
+## How to Run
+
+### 1. Install
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -e .
 ```
 
 ### 2. Create baseline
@@ -99,7 +125,7 @@ pip install -r requirements.txt
 Capture the current state of monitored directories (e.g. `./baseline`, `./test_assets`):
 
 ```bash
-python main.py init-baseline
+pxguard init-baseline
 ```
 
 Optional: `--dry-run` to only scan and report what would be written; no file changes.
@@ -109,7 +135,7 @@ Optional: `--dry-run` to only scan and report what would be written; no file cha
 Run continuous FIM; compare against baseline every `scan_interval` seconds:
 
 ```bash
-python main.py monitor
+pxguard monitor
 ```
 
 - Alerts go to `logs/alerts.log` (JSON lines) and, if enabled, to the console.
@@ -122,7 +148,7 @@ Optional: `--dry-run` to run compare cycles without writing alerts or changing s
 **Only modifies files under `simulator.allowed_root` (default: `./test_assets`).** Do not point this at real data.
 
 ```bash
-python main.py simulate-attack
+pxguard simulate-attack
 ```
 
 The simulator either Base64-encodes file contents or renames with `.locked`. Its actions are logged; PXGuard monitor will see MODIFIED/CREATED/DELETED and, if many changes in a short window, CRITICAL threshold alerts.
@@ -157,7 +183,7 @@ The simulator either Base64-encodes file contents or renames with `.locked`. Its
 
 3. **Baseline refresh**  
    After validating the system, update the baseline:  
-   `python main.py init-baseline`  
+   `pxguard init-baseline`  
    Then restart monitoring.
 
 ---

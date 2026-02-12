@@ -9,11 +9,11 @@ import time
 from pathlib import Path
 from typing import Any, Callable, Optional
 
-from core.alerts import AlertManager
-from core.comparator import BaselineComparator
-from core.models import Severity
-from core.scanner import DirectoryScanner
-from core.thresholds import ThresholdConfig, ThresholdTracker
+from pxguard.core.alerts import AlertManager
+from pxguard.core.comparator import BaselineComparator
+from pxguard.core.models import Severity
+from pxguard.core.scanner import DirectoryScanner
+from pxguard.core.thresholds import ThresholdConfig, ThresholdTracker
 
 logger = logging.getLogger(__name__)
 

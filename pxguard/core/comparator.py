@@ -9,8 +9,8 @@ import logging
 from pathlib import Path
 from typing import Any, Optional
 
-from core.models import EventType, FIMEvent, Severity
-from core.scanner import DirectoryScanner
+from pxguard.core.models import EventType, FIMEvent, Severity
+from pxguard.core.scanner import DirectoryScanner
 
 logger = logging.getLogger(__name__)
 

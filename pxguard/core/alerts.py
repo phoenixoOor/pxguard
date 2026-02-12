@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
-from core.models import FIMEvent, Severity
+from pxguard.core.models import FIMEvent, Severity
 
 logger = logging.getLogger(__name__)
 
