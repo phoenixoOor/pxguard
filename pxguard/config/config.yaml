@@ -23,6 +23,12 @@ thresholds:
   # Cooldown after threshold alert (seconds); no repeat alert until cooldown expires or count drops below threshold. Default: same as time_window_seconds.
   cooldown_seconds: 60
 
+dashboard:
+  # Set to false for headless/CI (no rich Live, use plain dashboard)
+  interactive: true
+  # Number of scan iterations and log lines to keep in memory
+  history_size: 30
+
 alerts:
   log_path: ./pxguard/logs/alerts.log
   console_alerts: true

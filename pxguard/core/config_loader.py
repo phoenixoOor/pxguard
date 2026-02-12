@@ -50,6 +50,10 @@ def load_config(config_path: Path, project_root: Optional[Path] = None) -> dict[
     else:
         cooldown_seconds = int(cooldown_seconds)
 
+    dashboard_raw = raw.get("dashboard", {})
+    dashboard_interactive = bool(dashboard_raw.get("interactive", True))
+    dashboard_history_size = int(dashboard_raw.get("history_size", 30))
+
     alerts_raw = raw.get("alerts", {})
     log_path = alerts_raw.get("log_path", "./logs/alerts.log")
     console_alerts = bool(alerts_raw.get("console_alerts", True))
@@ -68,6 +72,8 @@ def load_config(config_path: Path, project_root: Optional[Path] = None) -> dict[
     return {
         "project_root": root,
         "directories": [resolve(d) for d in directories],
+        "dashboard_interactive": dashboard_interactive,
+        "dashboard_history_size": max(10, min(100, dashboard_history_size)),
         "scan_interval": scan_interval,
         "exclude_patterns": exclude_patterns,
         "threshold_change_count": change_count,

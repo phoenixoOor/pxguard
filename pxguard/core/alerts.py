@@ -1,5 +1,7 @@
 """
 PXGuard - Alert management and structured logging.
+
+Uses colorama for cross-platform (Linux/Windows) colored console alerts.
 """
 
 import json
@@ -12,13 +14,40 @@ from pxguard.core.models import FIMEvent, Severity
 
 logger = logging.getLogger(__name__)
 
-# ANSI codes for colored console output
-COLORS = {
-    "INFO": "\033[36m",     # Cyan
-    "WARNING": "\033[33m",  # Yellow
-    "CRITICAL": "\033[31m", # Red
-    "RESET": "\033[0m",
-}
+# Lazy init of colorama (once per process)
+_colorama_init_done = False
+
+
+def _ensure_colorama() -> None:
+    global _colorama_init_done
+    if not _colorama_init_done:
+        try:
+            import colorama
+            colorama.init(autoreset=True)
+            _colorama_init_done = True
+        except ImportError:
+            _colorama_init_done = True  # avoid retry
+
+
+def colored_alert(message: str, level: str) -> None:
+    """
+    Print an alert message in color to stderr. Safe on Linux and Windows.
+
+    level: "CRITICAL" (red), "WARNING" (yellow), "INFO" or "OK" (green).
+    """
+    _ensure_colorama()
+    try:
+        from colorama import Fore
+        level_upper = level.upper()
+        if level_upper == "CRITICAL":
+            prefix = Fore.RED
+        elif level_upper == "WARNING":
+            prefix = Fore.YELLOW
+        else:
+            prefix = Fore.GREEN  # INFO, OK, or default
+        print(f"{prefix}{message}", file=sys.stderr)
+    except ImportError:
+        print(message, file=sys.stderr)
 
 
 class AlertManager:
@@ -76,9 +105,8 @@ class AlertManager:
         except OSError as e:
             logger.exception("Failed to write alert to %s: %s", self.log_path, e)
         if self.console_alerts:
-            color = COLORS.get(event.severity.value, COLORS["RESET"])
-            reset = COLORS["RESET"]
-            print(f"{color}[{event.severity.value}] {event.event_type.value}: {event.file_path}{reset}", file=sys.stderr)
+            msg = f"[{event.severity.value}] {event.event_type.value}: {event.file_path}"
+            colored_alert(msg, event.severity.value)
 
     def emit_batch(self, events: list[FIMEvent]) -> None:
         """Emit multiple events in order."""
