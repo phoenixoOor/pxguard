@@ -1,0 +1,48 @@
+# PXGuard - File Integrity Monitoring Configuration
+# Author: phoenixoOor
+
+monitoring:
+  # Directories to monitor (paths relative to project root or absolute)
+  directories:
+    - ./baseline
+    - ./test_assets
+
+  # Scan interval in seconds
+  scan_interval: 30
+
+  # Excluded patterns (glob-style; files matching these are ignored)
+  exclude_patterns:
+    - "*.log"
+    - "*.tmp"
+    - "*.swp"
+    - ".git/*"
+    - "__pycache__/*"
+    - "*.pyc"
+    - "baseline.json"
+
+# Ransomware-like behavior detection
+thresholds:
+  # Maximum number of file changes allowed in time window
+  change_count: 10
+
+  # Time window in seconds
+  time_window_seconds: 60
+
+# Alerting
+alerts:
+  # Log file path (relative to project root)
+  log_path: ./logs/alerts.log
+
+  # Enable colored console output for alerts
+  console_alerts: true
+
+  # Minimum severity to log (INFO, WARNING, CRITICAL)
+  min_severity: INFO
+
+# Paths (all relative to project root unless absolute)
+paths:
+  baseline_file: ./baseline/baseline.json
+
+# Simulator safety: only operate inside this directory
+simulator:
+  allowed_root: ./test_assets

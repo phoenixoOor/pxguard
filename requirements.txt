@@ -1,0 +1,4 @@
+# PXGuard - File Integrity Monitoring
+# Python 3.11+
+
+PyYAML>=6.0
