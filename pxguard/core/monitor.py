@@ -11,7 +11,8 @@ from typing import Any, Callable, Optional
 
 from pxguard.core.alerts import AlertManager
 from pxguard.core.comparator import BaselineComparator
-from pxguard.core.models import Severity
+from pxguard.core.dashboard import Dashboard
+from pxguard.core.models import EventType, Severity
 from pxguard.core.scanner import DirectoryScanner
 from pxguard.core.thresholds import ThresholdConfig, ThresholdTracker
 
@@ -56,18 +57,18 @@ class FileMonitor:
         self._root = root
         self._dirs = dirs
 
-    def run_once(self) -> list:
-        """Perform one compare cycle; return list of FIMEvent emitted."""
+    def run_once(self) -> tuple[list, int]:
+        """Perform one compare cycle; return (list of FIMEvent emitted, scanned file count)."""
         baseline = self.comparator.load_baseline(self.baseline_path)
         if not baseline:
             logger.warning("Empty or missing baseline; skipping compare cycle.")
-            return []
+            return [], 0
         current = self.scanner.scan_directories(self._dirs, self._root)
         events = self.comparator.compare(baseline, current)
         events = self.threshold_tracker.record_and_escalate(events)
         if not self.dry_run:
             self.alert_manager.emit_batch(events)
-        return events
+        return events, len(current)
 
     def run(self) -> None:
         """Run monitoring loop until stop_event is True."""
@@ -76,9 +77,27 @@ class FileMonitor:
             self.scan_interval,
             self.dry_run,
         )
+        dashboard = Dashboard()
         while not self.stop_event():
             try:
-                self.run_once()
+                events, scanned = self.run_once()
+                modified = sum(1 for e in events if e.event_type == EventType.MODIFIED)
+                deleted = sum(1 for e in events if e.event_type == EventType.DELETED)
+                created = sum(1 for e in events if e.event_type == EventType.CREATED)
+                if any(e.severity == Severity.CRITICAL for e in events):
+                    status: str = "CRITICAL"
+                elif any(e.severity == Severity.WARNING for e in events):
+                    status = "WARNING"
+                else:
+                    status = "OK"
+                dashboard.update(
+                    scanned=scanned,
+                    modified=modified,
+                    deleted=deleted,
+                    created=created,
+                    status=status,
+                )
+                dashboard.render()
             except Exception as e:
                 logger.exception("Monitor cycle failed: %s", e)
             for _ in range(self.scan_interval):
