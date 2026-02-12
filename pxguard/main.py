@@ -77,6 +77,13 @@ def cmd_simulate(config: dict, args: argparse.Namespace) -> None:
     """Run the ransomware simulator (safe: only in allowed root)."""
     from pxguard.simulator.ransomware_simulator import run_simulation
 
+    dry_run = getattr(args, "dry_run", False)
+    if dry_run:
+        logging.getLogger(__name__).info(
+            "Dry run: would run simulator under %s (no files modified)",
+            config["simulator_allowed_root"],
+        )
+        return
     config_path = Path(args.config)
     if not config_path.is_absolute():
         config_path = Path.cwd() / config_path
@@ -88,9 +95,26 @@ def cmd_simulate(config: dict, args: argparse.Namespace) -> None:
     )
 
 
+def _add_common_args(parser: argparse.ArgumentParser, default_config: str) -> None:
+    """Add --config and --dry-run so they work after subcommand (e.g. pxguard monitor --dry-run)."""
+    parser.add_argument(
+        "--config",
+        type=str,
+        default=default_config,
+        help="Path to config.yaml (default: package config; use CWD-relative or absolute)",
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        dest="dry_run",
+        help="Do not write baseline or alerts; only scan/compare.",
+    )
+
+
 def main() -> int:
-    """CLI logic (unchanged from original)."""
+    """CLI logic."""
     _default_config = Path(__file__).resolve().parent / "config" / "config.yaml"
+    _default_config_str = str(_default_config)
     parser = argparse.ArgumentParser(
         prog="pxguard",
         description="File Integrity Monitoring (FIM) for Linux - detect unauthorized file modifications.",
@@ -98,22 +122,35 @@ def main() -> int:
     parser.add_argument(
         "--config",
         type=str,
-        default=str(_default_config),
+        default=_default_config_str,
         help="Path to config.yaml (default: package config; use CWD-relative or absolute)",
     )
     parser.add_argument(
         "--dry-run",
         action="store_true",
+        dest="dry_run",
         help="Do not write baseline or alerts; only scan/compare.",
     )
     parser.add_argument("-v", "--verbose", action="store_true", help="Verbose logging")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    sub.add_parser("init-baseline", help="Create baseline from current state of monitored directories")
-    sub.add_parser("monitor", help="Start continuous FIM monitoring")
-    sub.add_parser("simulate-attack", help="Run ransomware simulator in test directory")
+    p_init = sub.add_parser("init-baseline", help="Create baseline from current state of monitored directories")
+    _add_common_args(p_init, _default_config_str)
+
+    p_monitor = sub.add_parser("monitor", help="Start continuous FIM monitoring")
+    _add_common_args(p_monitor, _default_config_str)
+
+    p_simulate = sub.add_parser("simulate-attack", help="Run ransomware simulator in test directory")
+    _add_common_args(p_simulate, _default_config_str)
 
     args = parser.parse_args()
+    # Preserve global options when given before subcommand (subparser can overwrite root namespace)
+    if "--dry-run" in sys.argv:
+        args.dry_run = True
+    if "--config" in sys.argv:
+        idx = sys.argv.index("--config")
+        if idx + 1 < len(sys.argv):
+            args.config = sys.argv[idx + 1]
     setup_logging(verbose=args.verbose)
 
     try:
@@ -125,10 +162,11 @@ def main() -> int:
         logging.getLogger(__name__).exception("Failed to load config: %s", e)
         return 1
 
+    dry_run = getattr(args, "dry_run", False)
     if args.command == "init-baseline":
-        cmd_init_baseline(config, args.dry_run)
+        cmd_init_baseline(config, dry_run)
     elif args.command == "monitor":
-        cmd_monitor(config, args.dry_run)
+        cmd_monitor(config, dry_run)
     elif args.command == "simulate-attack":
         cmd_simulate(config, args)
     else:

@@ -44,6 +44,11 @@ def load_config(config_path: Path, project_root: Optional[Path] = None) -> dict[
     thresholds_raw = raw.get("thresholds", {})
     change_count = int(thresholds_raw.get("change_count", 10))
     time_window_seconds = int(thresholds_raw.get("time_window_seconds", 60))
+    cooldown_seconds = thresholds_raw.get("cooldown_seconds")
+    if cooldown_seconds is None:
+        cooldown_seconds = time_window_seconds
+    else:
+        cooldown_seconds = int(cooldown_seconds)
 
     alerts_raw = raw.get("alerts", {})
     log_path = alerts_raw.get("log_path", "./logs/alerts.log")
@@ -67,6 +72,7 @@ def load_config(config_path: Path, project_root: Optional[Path] = None) -> dict[
         "exclude_patterns": exclude_patterns,
         "threshold_change_count": change_count,
         "threshold_time_window_seconds": time_window_seconds,
+        "threshold_cooldown_seconds": cooldown_seconds,
         "alert_log_path": resolve(log_path),
         "console_alerts": console_alerts,
         "min_severity": min_severity,

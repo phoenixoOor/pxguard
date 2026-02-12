@@ -20,6 +20,8 @@ monitoring:
 thresholds:
   change_count: 10
   time_window_seconds: 60
+  # Cooldown after threshold alert (seconds); no repeat alert until cooldown expires or count drops below threshold. Default: same as time_window_seconds.
+  cooldown_seconds: 60
 
 alerts:
   log_path: ./pxguard/logs/alerts.log

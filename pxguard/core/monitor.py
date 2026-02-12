@@ -43,10 +43,12 @@ class FileMonitor:
             console_alerts=config["console_alerts"],
             min_severity=Severity(config.get("min_severity", "INFO")),
         )
+        cooldown = config.get("threshold_cooldown_seconds") or config["threshold_time_window_seconds"]
         self.threshold_tracker = ThresholdTracker(
             ThresholdConfig(
                 change_count=config["threshold_change_count"],
                 time_window_seconds=config["threshold_time_window_seconds"],
+                cooldown_seconds=cooldown,
             )
         )
         self.baseline_path = Path(config["baseline_path"])
@@ -69,7 +71,11 @@ class FileMonitor:
 
     def run(self) -> None:
         """Run monitoring loop until stop_event is True."""
-        logger.info("Starting PXGuard monitor (interval=%ds, dry_run=%s)", self.scan_interval, self.dry_run)
+        logger.info(
+            "Starting PXGuard monitor (interval=%ds, dry_run=%s)",
+            self.scan_interval,
+            self.dry_run,
+        )
         while not self.stop_event():
             try:
                 self.run_once()
