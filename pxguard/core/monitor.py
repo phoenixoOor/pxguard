@@ -124,12 +124,14 @@ class FileMonitor:
         )
         change_graph = ChangeGraph()
         use_rich = _use_rich_dashboard(self.config)
-        if use_rich:
-            self._run_with_rich_dashboard(change_graph)
-        else:
-            self._run_with_plain_dashboard(change_graph)
-        graph_save_path = None if self.dry_run else Path(self.config["alert_log_path"]).parent / "change_graph.png"
-        change_graph.plot(save_path=graph_save_path)
+        try:
+            if use_rich:
+                self._run_with_rich_dashboard(change_graph)
+            else:
+                self._run_with_plain_dashboard(change_graph)
+        finally:
+            graph_save_path = None if self.dry_run else Path(self.config["alert_log_path"]).parent / "change_graph.png"
+            change_graph.plot(save_path=graph_save_path)
         logger.info("PXGuard monitor stopped.")
 
     def _run_with_rich_dashboard(self, change_graph: ChangeGraph) -> None:

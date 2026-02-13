@@ -71,3 +71,7 @@ Thumbs.db
 
 # Session files
 session_*
+
+test_assets/*
+pxguard/logs/change_graph.png
+pxguard/baseline/*.json

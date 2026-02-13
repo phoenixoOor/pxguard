@@ -147,42 +147,28 @@ class ChangeGraph:
 
     def plot(self, save_path: Optional[Path] = None) -> None:
         """
-        Display a graph of changes over time, or save to PNG if GUI unavailable.
+        Build graph from accumulated change counts and save to PNG when save_path is given.
 
-        Try interactive display (TkAgg). If tkinter is missing or display fails,
-        fall back to headless mode and save graph to save_path (e.g. logs/change_graph.png).
+        Uses Agg backend so the same data is always written to the file regardless of
+        display availability (no TkAgg branch that would skip saving).
         """
         if not self._change_counts:
-            logger.debug("No change data to plot")
+            logger.info("No change data to plot; skipping graph save.")
             return
         save_path = Path(save_path) if save_path else None
-
-        # Prefer interactive display on Linux/Windows when display is available
-        try:
-            import matplotlib
-            matplotlib.use("TkAgg")
-            import matplotlib.pyplot as plt
-            fig, ax = self._build_figure()
-            plt.show()
-            plt.close(fig)
+        if not save_path:
             return
-        except ImportError as e:
-            logger.debug("TkAgg/matplotlib GUI not available: %s; trying headless save", e)
-        except Exception as e:
-            logger.debug("GUI display failed: %s; falling back to headless save", e)
 
-        # Headless: use Agg backend and save to PNG
         try:
             import matplotlib
             matplotlib.use("Agg")
             import matplotlib.pyplot as plt
             fig, ax = self._build_figure()
-            if save_path:
-                save_path.parent.mkdir(parents=True, exist_ok=True)
-                fig.savefig(save_path, dpi=150)
-                logger.info("Change graph saved to %s", save_path)
+            save_path.parent.mkdir(parents=True, exist_ok=True)
+            fig.savefig(save_path, dpi=150)
+            logger.info("Change graph saved to %s", save_path)
             plt.close(fig)
         except ImportError as e:
             logger.warning("matplotlib not available; skipping graph: %s", e)
         except Exception as e:
-            logger.warning("Failed to save change graph: %s", e)
+            logger.warning("Failed to save change graph: %s", e, exc_info=True)

@@ -144,49 +144,70 @@ class RichDashboard:
         )
 
     def _make_graph_panel(self) -> Panel:
-        """Middle panel: sliding ASCII graph of Created/Modified/Deleted + threshold."""
+        """Middle panel: cyber-security style — one severity-colored bar per scan, C/M/D breakdown, status badge."""
         if not self._scan_history:
-            return Panel(Text("— waiting for scans —", style="dim"), title="Changes (last N scans)", border_style="blue")
+            return Panel(
+                Text("— waiting for scans —", style="dim"),
+                title="[bold]CHANGE ACTIVITY[/]  [dim]last N scans[/]",
+                border_style="bright_black",
+                padding=(0, 1),
+            )
         records = list(self._scan_history)[-self._history_size:]
-        max_val = 1
+        max_val = max(1, self._threshold)
         for r in records:
             total = r.modified + r.deleted + r.created
             if total > max_val:
                 max_val = total
-        if self._threshold > max_val:
-            max_val = self._threshold
-        bar_width = 12
-        table = Table(show_header=True, box=rich_box.SIMPLE if rich_box else None, padding=(0, 0))
-        table.add_column("Iter", style="dim", width=5)
-        table.add_column("Created", style="green", width=bar_width)
-        table.add_column("Modified", style="yellow", width=bar_width)
-        table.add_column("Deleted", style="red", width=bar_width)
-        table.add_column("Total", width=6)
-        table.add_column("Threshold", style="dim", width=4)
+        bar_width = 22
+        table = Table(
+            show_header=True,
+            box=rich_box.ROUNDED if rich_box else None,
+            padding=(0, 1),
+            header_style="bold dim",
+            border_style="bright_black",
+        )
+        table.add_column("#", style="dim", width=4, justify="right")
+        table.add_column("Activity", width=bar_width + 2)
+        table.add_column("C / M / D", style="dim", width=11, justify="right")
+        table.add_column("Status", width=10)
         for r in records:
-            c_bar = self._bar(r.created, max_val, bar_width)
-            m_bar = self._bar(r.modified, max_val, bar_width)
-            d_bar = self._bar(r.deleted, max_val, bar_width)
             total = r.modified + r.deleted + r.created
-            total_style = "red" if r.threshold_exceeded else ("yellow" if total >= self._threshold // 2 else "green")
-            table.add_row(
-                str(r.iteration),
-                c_bar,
-                m_bar,
-                d_bar,
-                Text(str(total), style=total_style),
-                str(self._threshold),
+            bar_style = (
+                "bold red" if r.threshold_exceeded
+                else ("bold yellow" if total >= self._threshold // 2 else "bold green")
             )
-        return Panel(table, title="Changes per scan (green=Created, yellow=Modified, red=Deleted)", border_style="blue", padding=(0, 1))
+            bar = self._bar(total, max_val, bar_width, bar_style)
+            c_m_d = Text(f"{r.created} / {r.modified} / {r.deleted}", style="dim")
+            if r.status == "CRITICAL":
+                badge = Text(" CRITICAL ", style="bold white on red")
+            elif r.status == "WARNING":
+                badge = Text(" WARNING ", style="bold black on yellow")
+            else:
+                badge = Text(" OK ", style="bold white on green")
+            table.add_row(str(r.iteration), bar, c_m_d, badge)
+        subtitle = (
+            f"[green]●[/] normal  [yellow]●[/] moderate  [red]●[/] critical  [dim]|  Thr={self._threshold}[/]"
+        )
+        return Panel(
+            table,
+            title="[bold]CHANGE ACTIVITY[/]  [dim]last N scans[/]",
+            subtitle=subtitle,
+            border_style="bright_black",
+            padding=(0, 1),
+        )
 
-    def _bar(self, value: int, max_val: int, width: int) -> Text:
-        """One horizontal bar (block chars) for value."""
+    def _bar(self, value: int, max_val: int, width: int, style: str = "") -> Text:
+        """One horizontal bar (block chars), optionally styled (e.g. green/yellow/red)."""
         if max_val <= 0:
             n = 0
         else:
             n = int(round((value / max_val) * width))
         n = max(0, min(width, n))
-        return Text("█" * n + "░" * (width - n))
+        filled = "█" * n
+        empty = "░" * (width - n)
+        if style:
+            return Text(filled, style=style) + Text(empty, style="dim")
+        return Text(filled + empty)
 
     def _make_log_panel(self) -> Panel:
         """Bottom panel: last N log lines with severity colors."""

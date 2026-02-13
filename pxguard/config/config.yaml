@@ -6,7 +6,7 @@ monitoring:
   directories:
     - ./test_assets
 
-  scan_interval: 30
+  scan_interval: 10
 
   exclude_patterns:
     - "*.log"
