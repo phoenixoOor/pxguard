@@ -7,6 +7,7 @@ Uses real monitor metrics only; no simulated data. Single Live instance.
 
 from collections import deque
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Any, Literal, Optional
 
 try:
@@ -59,10 +60,15 @@ class ScanRecord:
 
 @dataclass
 class LogRecord:
-    """One alert line."""
+    """One alert line with timestamp."""
 
     message: str
     severity: SeverityStr
+    timestamp: Optional[datetime] = None
+
+    def __post_init__(self) -> None:
+        if self.timestamp is None:
+            self.timestamp = datetime.now(timezone.utc)
 
 
 def _style_status(s: Status) -> str:
@@ -78,7 +84,7 @@ def _style_severity(s: SeverityStr) -> str:
         return "red"
     if s == "WARNING":
         return "yellow"
-    return "green"
+    return "cyan"
 
 
 class RichDashboard:
@@ -179,7 +185,14 @@ class RichDashboard:
             else:
                 table.add_row("Threat level", Text(r.status, style=_style_status(r.status)))
             table.add_row("Threat meter", self._threat_meter_bar(total))
-        hint = Text(" green=OK  yellow=WARNING  red=CRITICAL ", style="dim")
+        hint = Text()
+        hint.append(" ", style="dim")
+        hint.append("●", style="bold green")
+        hint.append(" OK  ", style="dim")
+        hint.append("●", style="bold yellow")
+        hint.append(" WARN  ", style="dim")
+        hint.append("●", style="bold red")
+        hint.append(" CRIT", style="dim")
         return Panel(
             Group(table, hint),
             title="[bold] Threat Summary [/]",
@@ -220,9 +233,18 @@ class RichDashboard:
         else:
             subtitle = Text(" Current: —  |  Threshold: %d  " % self._threshold, style="dim")
 
+        title_render: Any
+        if is_critical:
+            title_render = Text()
+            title_render.append(" ", style="bold")
+            title_render.append("Activity Monitor  ", style="bold")
+            title_render.append("!! SYSTEM COMPROMISED !!", style="blink bold red")
+        else:
+            title_render = "[bold] Activity Monitor [/]"
+
         return Panel(
             body,
-            title="[bold] Activity Monitor [/]",
+            title=title_render,
             subtitle=subtitle,
             border_style="bold red" if is_critical else "bright_black",
             box=rich_box.ROUNDED,
@@ -230,16 +252,27 @@ class RichDashboard:
         )
 
     def _make_alerts_panel(self) -> Panel:
-        """Recent Alerts."""
+        """Recent Alerts: Time, Severity, Message; row color by severity; last 10 only."""
         table = Table(show_header=True, box=rich_box.SIMPLE if rich_box else None, padding=(0, 1))
+        table.add_column("Time", width=10)
         table.add_column("Severity", width=8)
         table.add_column("Message", overflow="fold")
-        recent = list(self._log_history)[-self._history_size:]
+        recent = list(self._log_history)[-10:]
         if recent:
             for rec in recent:
-                table.add_row(Text(rec.severity, style=_style_severity(rec.severity)), rec.message)
+                row_style = _style_severity(rec.severity)
+                ts = rec.timestamp.strftime("%H:%M:%S") if rec.timestamp else "—"
+                table.add_row(
+                    Text(ts, style=row_style),
+                    Text(rec.severity, style=row_style),
+                    Text(rec.message, style=row_style),
+                )
         else:
-            table.add_row(Text("—", style="dim"), Text("No alerts yet", style="dim"))
+            table.add_row(
+                Text("—", style="dim"),
+                Text("—", style="dim"),
+                Text("No alerts yet", style="dim"),
+            )
         return Panel(
             table,
             title="[bold] Recent Alerts [/]",

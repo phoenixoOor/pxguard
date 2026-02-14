@@ -256,7 +256,7 @@ class CyberActivityGraph:
 
         max_label = "0x%X" % int(max_val) if max_val < 256 else "LVL:%d" % int(max_val)
         zero_label = "0x0"
-        label_w = max(self.label_width, len(max_label), len(zero_label))
+        label_w = max(self.label_width, len(max_label), len(zero_label), 6)
 
         lines: List[Any] = []
         # Top indicator: bold green when safe, bold red blink when CRITICAL
@@ -285,13 +285,15 @@ class CyberActivityGraph:
                 t.append(ch, style=st)
             lines.append(t)
 
-        # Color legend
+        # Legend: texture icons + labels
         legend = Text()
         legend.append(" " * label_w + " \u2502 ", style="dim")
-        legend.append(" \u2591\u2592\u2593\u2588 ", style="dim")
-        legend.append("bright_cyan=safe ", style="bright_cyan")
-        legend.append("magenta=near ", style="magenta")
-        legend.append("red=critical", style="bold red")
+        legend.append("\u2591", style="bright_cyan")
+        legend.append(" SAFE  ", style="dim")
+        legend.append("\u2592", style="magenta")
+        legend.append(" RISK  ", style="dim")
+        legend.append("\u2593", style="bold red")
+        legend.append(" CRIT", style="dim")
         lines.append(legend)
 
         if not has_data:
