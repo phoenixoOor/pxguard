@@ -1,8 +1,9 @@
 """
 PXGuard - Single professional Rich CLI dashboard (Cyber Security / Hacker Terminal style).
 
-Layout: Threat Summary | Activity Monitor (CyberActivityGraph) | Recent Alerts.
-Process SOURCE [PID/PROC], tactical audio on CRITICAL, breathing graph.
+Layout (rich.layout.Layout): top 12 rows — Threat Summary (ratio=1) | Activity Monitor (ratio=2);
+bottom — Recent Alerts full height. SOURCE column dim yellow; tactical beep on first CRITICAL;
+breathing graph (idle 3 scans reduces Y scale).
 """
 
 from collections import deque
@@ -12,8 +13,8 @@ from typing import Any, Literal, Optional
 
 try:
     from rich.console import Group, RenderableType
-    from rich.columns import Columns
     from rich.live import Live
+    from rich.layout import Layout
     from rich.panel import Panel
     from rich.table import Table
     from rich.text import Text
@@ -27,7 +28,7 @@ except ImportError:
     Table = None
     Text = None
     Group = None
-    Columns = None
+    Layout = None
     rich_box = None
     RenderableType = Any
 
@@ -312,19 +313,24 @@ class RichDashboard:
         )
 
     def get_renderable(self) -> RenderableType:
-        """Threat Summary and Activity Monitor side by side; Recent Alerts below."""
-        if RICH_AVAILABLE and Columns is not None:
-            top_row = Columns(
-                [self._make_threat_summary_panel(), self._make_graph_panel()],
-                expand=True,
-                equal=False,
+        """
+        Layout: top block 12 rows — Summary (ratio=1) | Activity Monitor (ratio=2);
+        bottom block — Recent Alerts on remaining height. Panels rendered once in their slots.
+        """
+        if not RICH_AVAILABLE or Layout is None:
+            return Group(
+                self._make_threat_summary_panel(),
+                self._make_graph_panel(),
+                self._make_alerts_panel(),
             )
-            return Group(top_row, self._make_alerts_panel())
-        return Group(
-            self._make_threat_summary_panel(),
-            self._make_graph_panel(),
-            self._make_alerts_panel(),
+        top = Layout(size=12)
+        top.split_row(
+            Layout(self._make_threat_summary_panel(), ratio=1),
+            Layout(self._make_graph_panel(), ratio=2),
         )
+        root = Layout()
+        root.split_column(top, Layout(self._make_alerts_panel(), ratio=1))
+        return root
 
 
 def create_live_dashboard(

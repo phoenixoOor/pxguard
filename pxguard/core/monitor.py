@@ -11,8 +11,9 @@ import logging
 import os
 import sys
 import time
+from functools import lru_cache
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Tuple
 
 from pxguard.core.alerts import AlertManager
 from pxguard.core.anomaly_engine import AnomalyConfig, AnomalyEngine
@@ -26,6 +27,58 @@ from pxguard.core.scanner import DirectoryScanner
 from pxguard.core.thresholds import ThresholdConfig, ThresholdTracker
 
 logger = logging.getLogger(__name__)
+
+
+@lru_cache(maxsize=128)
+def _resolve_pid_name_cached(normalized_path: str) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Resolve (pid, process_name) for a process that has the file open.
+    Called only when a file change event exists; cached to avoid re-iterating on same path.
+    """
+    try:
+        import psutil
+    except ImportError:
+        return None, None
+    path = Path(normalized_path)
+    if not path.is_absolute():
+        try:
+            path = path.resolve()
+        except (OSError, RuntimeError):
+            return None, None
+    try:
+        for proc in psutil.process_iter(["pid", "name", "open_files"]):
+            try:
+                for f in proc.open_files():
+                    try:
+                        if Path(f.path).resolve() == path:
+                            return (
+                                proc.info["pid"],
+                                (proc.info.get("name") or "?")[:24],
+                            )
+                    except (OSError, RuntimeError):
+                        continue
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+    except Exception as e:
+        logger.debug("Process resolve failed for %s: %s", normalized_path, e)
+    return None, None
+
+
+def _resolve_source_process(file_path: str, self_pid: Optional[int] = None) -> str:
+    """
+    Return source string for dashboard: 0xPID [name], 0xPID [SELF], or 0x???? [UNKNOWN].
+    Search runs only when file was changed/created (call site); cache avoids stutter.
+    """
+    try:
+        normalized = str(Path(file_path).resolve())
+    except (OSError, RuntimeError):
+        normalized = file_path
+    pid, name = _resolve_pid_name_cached(normalized)
+    if pid is None:
+        return "0x???? [UNKNOWN]"
+    if self_pid is not None and pid == self_pid:
+        return "0x%X [SELF]" % pid
+    return "0x%X [%s]" % (pid, (name or "?")[:20])
 
 
 @contextlib.contextmanager
@@ -296,13 +349,9 @@ class FileMonitor:
                             threshold_exceeded=threshold_exceeded,
                             no_baseline=not has_baseline,
                         )
-                        try:
-                            from pxguard.core.process_resolver import format_source as _format_source
-                        except Exception:
-                            _format_source = None
                         for e in events:
                             msg = f"{e.event_type.value}: {e.file_path}"
-                            source = _format_source(e.file_path, os.getpid()) if _format_source else "0x???? [UNKNOWN]"
+                            source = _resolve_source_process(e.file_path, self_pid=os.getpid())
                             rich_dash.add_log(msg, e.severity.value, source=source)
                         live.update(rich_dash.get_renderable(), refresh=True)
                         last_scan_time = now
