@@ -63,6 +63,8 @@ dmypy.json
 *.sublime-workspace
 
 # Logs
+pxguard/logs/*
+!pxguard/logs/.gitkeep
 *.log
 
 # OS files
