@@ -110,6 +110,7 @@ class RichDashboard:
         self._log_history: deque[LogRecord] = deque(maxlen=self._history_size)
         self._iteration = 0
         self._was_critical = False
+        self._display_peak = 0.0
 
     def update(
         self,
@@ -124,7 +125,7 @@ class RichDashboard:
     ) -> None:
         """
         Single entry point: push real metrics from monitor after each scan.
-        No fake values.
+        No fake values. System beep once on first transition to CRITICAL.
         """
         self._iteration += 1
         if status == "CRITICAL" and not self._was_critical:
@@ -227,6 +228,7 @@ class RichDashboard:
         """
         Activity Monitor: CyberActivityGraph — bottom-up bars, vertical gradient, scanline gaps,
         threshold overlay, [ DATA_STREAM ] green/red, color legend.
+        Graph width ~0.6 of console so Layout blocks do not overlap.
         """
         from pxguard.core.graph_engine import CyberActivityGraph
 
@@ -234,13 +236,19 @@ class RichDashboard:
             console_width = self._console.width if self._console else None
         except Exception:
             console_width = None
-        graph_width = max(20, (console_width or 80) - 24) if console_width else GRAPH_WIDTH_DEFAULT
+        total_width = console_width or 80
+        graph_width = max(20, int(total_width * 0.6))
 
         history_data = [r.total_changes for r in self._scan_history]
         is_critical = bool(self._scan_history and self._scan_history[-1].threshold_exceeded)
         last_3 = history_data[-3:] if len(history_data) >= 3 else []
         idle_scans = 3 if (len(last_3) == 3 and all(x == 0 for x in last_3)) else 0
-        recent_peak = max(history_data) if history_data else 0
+        recent_peak_raw = max(history_data) if history_data else 0
+        if idle_scans >= 3 and self._display_peak > 0:
+            self._display_peak = max(self._threshold, self._display_peak * 0.85)
+        else:
+            self._display_peak = max(self._display_peak, float(recent_peak_raw))
+        recent_peak = self._display_peak
         body = CyberActivityGraph(
             history_data=history_data,
             threshold=self._threshold,

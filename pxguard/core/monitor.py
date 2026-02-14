@@ -15,6 +15,11 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple
 
+try:
+    import psutil
+except ImportError:
+    psutil = None
+
 from pxguard.core.alerts import AlertManager
 from pxguard.core.anomaly_engine import AnomalyConfig, AnomalyEngine
 from pxguard.core.comparator import BaselineComparator
@@ -35,9 +40,7 @@ def _resolve_pid_name_cached(normalized_path: str) -> Tuple[Optional[int], Optio
     Resolve (pid, process_name) for a process that has the file open.
     Called only when a file change event exists; cached to avoid re-iterating on same path.
     """
-    try:
-        import psutil
-    except ImportError:
+    if psutil is None:
         return None, None
     path = Path(normalized_path)
     if not path.is_absolute():
@@ -189,6 +192,23 @@ class FileMonitor:
         if not self.dry_run:
             self.alert_manager.emit_batch(events)
         return events, scanned, True
+
+    def _get_process_by_file(self, file_path: str) -> str:
+        """
+        Find process that has this file open via psutil.process_iter(['pid', 'name', 'open_files']).
+        Run only for Modified/Created events to avoid slowing the monitor.
+        Returns 0xPID [name], 0xPID [SELF] if our PID, or 0x???? [UNKNOWN] if not found.
+        """
+        try:
+            normalized = str(Path(file_path).resolve())
+        except (OSError, RuntimeError):
+            normalized = file_path
+        pid, name = _resolve_pid_name_cached(normalized)
+        if pid is None:
+            return "0x???? [UNKNOWN]"
+        if pid == os.getpid():
+            return "0x%X [SELF]" % pid
+        return "0x%X [%s]" % (pid, (name or "?")[:20])
 
     def run(self) -> None:
         """Run monitoring loop until stop_event is True."""
@@ -351,7 +371,10 @@ class FileMonitor:
                         )
                         for e in events:
                             msg = f"{e.event_type.value}: {e.file_path}"
-                            source = _resolve_source_process(e.file_path, self_pid=os.getpid())
+                            if e.event_type in (EventType.MODIFIED, EventType.CREATED):
+                                source = self._get_process_by_file(e.file_path)
+                            else:
+                                source = "0x???? [—]"
                             rich_dash.add_log(msg, e.severity.value, source=source)
                         live.update(rich_dash.get_renderable(), refresh=True)
                         last_scan_time = now
