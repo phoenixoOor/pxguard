@@ -11,6 +11,7 @@ from typing import Any, Literal, Optional
 
 try:
     from rich.console import Group, RenderableType
+    from rich.columns import Columns
     from rich.live import Live
     from rich.panel import Panel
     from rich.table import Table
@@ -25,6 +26,7 @@ except ImportError:
     Table = None
     Text = None
     Group = None
+    Columns = None
     rich_box = None
     RenderableType = Any
 
@@ -177,8 +179,9 @@ class RichDashboard:
             else:
                 table.add_row("Threat level", Text(r.status, style=_style_status(r.status)))
             table.add_row("Threat meter", self._threat_meter_bar(total))
+        hint = Text(" green=OK  yellow=WARNING  red=CRITICAL ", style="dim")
         return Panel(
-            table,
+            Group(table, hint),
             title="[bold] Threat Summary [/]",
             border_style="cyan",
             box=rich_box.ROUNDED,
@@ -187,8 +190,8 @@ class RichDashboard:
 
     def _make_graph_panel(self) -> Panel:
         """
-        Activity Monitor: CyberActivityGraph (cyber/hacker terminal). Matrix grid, ░▒▓█,
-        bright_cyan/magenta/bright_red+blink, laser threshold, [ DATA_STREAM: ACTIVE ].
+        Activity Monitor: CyberActivityGraph — bottom-up bars, vertical gradient, scanline gaps,
+        threshold overlay, [ DATA_STREAM ] green/red, color legend.
         """
         from pxguard.core.graph_engine import CyberActivityGraph
 
@@ -199,18 +202,19 @@ class RichDashboard:
         graph_width = max(20, (console_width or 80) - 24) if console_width else GRAPH_WIDTH_DEFAULT
 
         history_data = [r.total_changes for r in self._scan_history]
+        is_critical = bool(self._scan_history and self._scan_history[-1].threshold_exceeded)
         body = CyberActivityGraph(
             history_data=history_data,
             threshold=self._threshold,
             width=graph_width,
             height=GRAPH_HEIGHT_ROWS,
+            is_critical=is_critical,
         )
 
-        # Subtitle: current change rate and threshold
         if self._scan_history:
             r = self._scan_history[-1]
             subtitle = Text(
-                " Current: %d changes  |  Threshold: %d  " % (r.total_changes, self._threshold),
+                " Current: %d  |  Threshold: %d  " % (r.total_changes, self._threshold),
                 style="dim",
             )
         else:
@@ -220,7 +224,7 @@ class RichDashboard:
             body,
             title="[bold] Activity Monitor [/]",
             subtitle=subtitle,
-            border_style="bold red" if (self._scan_history and self._scan_history[-1].threshold_exceeded) else "bright_black",
+            border_style="bold red" if is_critical else "bright_black",
             box=rich_box.ROUNDED,
             padding=(0, 1),
         )
@@ -245,7 +249,14 @@ class RichDashboard:
         )
 
     def get_renderable(self) -> RenderableType:
-        """Single renderable for Live.update(). No duplicate panels."""
+        """Threat Summary and Activity Monitor side by side; Recent Alerts below."""
+        if RICH_AVAILABLE and Columns is not None:
+            top_row = Columns(
+                [self._make_threat_summary_panel(), self._make_graph_panel()],
+                expand=True,
+                equal=False,
+            )
+            return Group(top_row, self._make_alerts_panel())
         return Group(
             self._make_threat_summary_panel(),
             self._make_graph_panel(),

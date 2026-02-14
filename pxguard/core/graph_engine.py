@@ -161,20 +161,23 @@ def _cyber_zone_style(value: float, threshold: int) -> str:
     return "bright_cyan"
 
 
-def _cyber_block_for_ratio(ratio: float) -> str:
-    """Map 0..1 to ░ ▒ ▓ █ (higher = denser)."""
-    if ratio <= 0:
-        return CYBER_BLOCKS[0]
-    idx = min(3, max(0, int(ratio * 4) if ratio < 1.0 else 3))
-    return CYBER_BLOCKS[idx]
+def _cyber_vertical_gradient(position_in_bar: float) -> str:
+    """Position 0=bottom (base), 1=top (peak). Returns ░ ▒ ▓ █ for volume effect."""
+    if position_in_bar <= 0.0:
+        return CYBER_BLOCKS[0]  # ░ base
+    if position_in_bar < 0.33:
+        return CYBER_BLOCKS[0]  # ░
+    if position_in_bar < 0.66:
+        return CYBER_BLOCKS[1]  # ▒
+    if position_in_bar < 1.0:
+        return CYBER_BLOCKS[2]  # ▓
+    return CYBER_BLOCKS[3]     # █ peak
 
 
 class CyberActivityGraph:
     """
-    Cyber Security / Hacker Terminal style graph: matrix grid (dim cyan ·),
-    data as ░▒▓█, safe=bright_cyan, near threshold=magenta, critical=bold bright_red blink.
-    Threshold line ═ bright red (laser). Y-axis 0x0 / LVL:MAX. [ DATA_STREAM: ACTIVE ].
-    Empty state: grid + NO_THREATS_DETECTED.
+    Cyber Security / Hacker Terminal style: bottom-up bars, vertical gradient ░▒▓█,
+    scanline gaps, threshold overlay under bars, [ DATA_STREAM ] green/red, color legend.
     """
 
     def __init__(
@@ -184,12 +187,14 @@ class CyberActivityGraph:
         width: int = 60,
         height: int = 8,
         label_width: int = 8,
+        is_critical: bool = False,
     ) -> None:
         self.history_data = list(history_data) if history_data else []
         self.threshold = max(1, threshold)
         self.width = max(1, width)
         self.height = max(2, height)
         self.label_width = max(4, label_width)
+        self.is_critical = is_critical
 
     def __rich_console__(self, console: Any, options: Any) -> Any:
         from rich.console import Group
@@ -201,17 +206,19 @@ class CyberActivityGraph:
         grid_style = "dim cyan"
         data = self.history_data
 
-        # Right-align: last w values; pad left with 0
-        if len(data) >= w:
-            values = data[-w:]
+        # Tape: newest on the right. Data columns with scanline gap (col 0, 2, 4, ...)
+        data_cols = (w + 1) // 2
+        if len(data) >= data_cols:
+            values = data[-data_cols:]
         else:
-            values = [0] * (w - len(data)) + data
+            values = [0] * (data_cols - len(data)) + data
 
         has_data = any(v > 0 for v in values)
         max_val = max(max(values), thr, 1)
         max_val_f = float(max_val)
+        last_value = values[-1] if values else 0
 
-        # 1) Matrix grid background: dim cyan · (or +)
+        # 1) Grid: dim cyan · everywhere
         grid_chars: List[List[str]] = [[CYBER_GRID_CHAR] * w for _ in range(h)]
         grid_styles: List[List[str]] = [[grid_style] * w for _ in range(h)]
 
@@ -220,48 +227,47 @@ class CyberActivityGraph:
             r = (h - 1) * (1.0 - thr / max_val_f)
             thr_row = max(0, min(h - 1, int(round(r))))
 
-        if has_data:
-            for col, v in enumerate(values):
-                if v <= 0:
-                    continue
-                bar_ratio = v / max_val_f
-                n_fill = max(0, min(h, int(round(bar_ratio * h))))
-                if n_fill == 0 and v > 0:
-                    n_fill = 1
-                zone_style = _cyber_zone_style(float(v), thr)
-                for i in range(n_fill):
-                    row = h - 1 - i
-                    if 0 <= row < h:
-                        if thr_row is not None and row == thr_row:
-                            grid_chars[row][col] = THRESHOLD_CHAR
-                            grid_styles[row][col] = "bold red"
-                        else:
-                            # Density: bottom cells lighter, top denser
-                            cell_ratio = (i + 1) / n_fill if n_fill else 1.0
-                            grid_chars[row][col] = _cyber_block_for_ratio(cell_ratio)
-                            grid_styles[row][col] = zone_style
-            if thr_row is not None:
-                for col in range(w):
-                    if grid_chars[thr_row][col] == CYBER_GRID_CHAR:
-                        grid_chars[thr_row][col] = THRESHOLD_CHAR
-                        grid_styles[thr_row][col] = "bold red"
-        else:
-            # Empty: show threshold line only
-            if thr_row is not None:
-                for col in range(w):
-                    grid_chars[thr_row][col] = THRESHOLD_CHAR
-                    grid_styles[thr_row][col] = "bold red"
+        # 2) Threshold overlay: ═ on thr_row over grid (will be under bars)
+        if thr_row is not None:
+            for col in range(w):
+                grid_chars[thr_row][col] = THRESHOLD_CHAR
+                grid_styles[thr_row][col] = "bold red"
+
+        # 3) Bars: strictly bottom-up from row h-1 (0x0). One data column every 2 display cols (scanline gap).
+        for c, v in enumerate(values):
+            display_col = c * 2
+            if display_col >= w:
+                break
+            if v <= 0:
+                continue
+            bar_ratio = v / max_val_f
+            n_fill = max(0, min(h, int(round(bar_ratio * h))))
+            if n_fill == 0 and v > 0:
+                n_fill = 1
+            zone_style = _cyber_zone_style(float(v), thr)
+            # Fill from bottom (row h-1) upward
+            for i in range(n_fill):
+                row = h - 1 - i
+                if 0 <= row < h:
+                    pos = (i + 1) / n_fill if n_fill else 1.0
+                    ch = _cyber_vertical_gradient(pos)
+                    grid_chars[row][display_col] = ch
+                    grid_styles[row][display_col] = zone_style
 
         max_label = "0x%X" % int(max_val) if max_val < 256 else "LVL:%d" % int(max_val)
         zero_label = "0x0"
         label_w = max(self.label_width, len(max_label), len(zero_label))
 
         lines: List[Any] = []
-        # Top indicator
+        # Top indicator: bold green when safe, bold red blink when CRITICAL
         top_line = Text()
         top_line.append(" " * label_w, style="dim")
         top_line.append("\u2502", style=grid_style)
-        top_line.append(" [ DATA_STREAM: ACTIVE ] " if has_data else " [ SCANNING... ] ", style="dim cyan")
+        if has_data:
+            ind_style = "bold red blink" if self.is_critical else "bold green"
+            top_line.append(" [ DATA_STREAM: ACTIVE ] ", style=ind_style)
+        else:
+            top_line.append(" [ SCANNING... ] ", style="dim cyan")
         lines.append(top_line)
 
         for row in range(h):
@@ -278,6 +284,15 @@ class CyberActivityGraph:
                 st = grid_styles[row][col] or grid_style
                 t.append(ch, style=st)
             lines.append(t)
+
+        # Color legend
+        legend = Text()
+        legend.append(" " * label_w + " \u2502 ", style="dim")
+        legend.append(" \u2591\u2592\u2593\u2588 ", style="dim")
+        legend.append("bright_cyan=safe ", style="bright_cyan")
+        legend.append("magenta=near ", style="magenta")
+        legend.append("red=critical", style="bold red")
+        lines.append(legend)
 
         if not has_data:
             no_threat = Text()
