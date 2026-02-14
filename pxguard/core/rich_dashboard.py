@@ -1,8 +1,8 @@
 """
 PXGuard - Single professional Rich CLI dashboard (Cyber Security / Hacker Terminal style).
 
-Layout: Threat Summary | Activity Monitor (CyberActivityGraph: matrix grid, ░▒▓█, laser threshold) | Recent Alerts.
-Uses real monitor metrics only; no simulated data. Single Live instance.
+Layout: Threat Summary | Activity Monitor (CyberActivityGraph) | Recent Alerts.
+Process SOURCE [PID/PROC], tactical audio on CRITICAL, breathing graph.
 """
 
 from collections import deque
@@ -60,11 +60,12 @@ class ScanRecord:
 
 @dataclass
 class LogRecord:
-    """One alert line with timestamp."""
+    """One alert line with timestamp and optional process source."""
 
     message: str
     severity: SeverityStr
     timestamp: Optional[datetime] = None
+    source: str = "0x???? [UNKNOWN]"
 
     def __post_init__(self) -> None:
         if self.timestamp is None:
@@ -107,6 +108,7 @@ class RichDashboard:
         self._scan_history: deque[ScanRecord] = deque(maxlen=self._history_size)
         self._log_history: deque[LogRecord] = deque(maxlen=self._history_size)
         self._iteration = 0
+        self._was_critical = False
 
     def update(
         self,
@@ -124,6 +126,14 @@ class RichDashboard:
         No fake values.
         """
         self._iteration += 1
+        if status == "CRITICAL" and not self._was_critical:
+            self._was_critical = True
+            try:
+                print("\a", end="", flush=True)
+            except Exception:
+                pass
+        elif status != "CRITICAL":
+            self._was_critical = False
         self._scan_history.append(
             ScanRecord(
                 iteration=self._iteration,
@@ -137,9 +147,20 @@ class RichDashboard:
             )
         )
 
-    def add_log(self, message: str, severity: SeverityStr = "INFO") -> None:
-        """Append one alert line."""
-        self._log_history.append(LogRecord(message=message, severity=severity))
+    def add_log(
+        self,
+        message: str,
+        severity: SeverityStr = "INFO",
+        source: Optional[str] = None,
+    ) -> None:
+        """Append one alert line. source: e.g. '0x1234 [python]' or '0x???? [UNKNOWN]'."""
+        self._log_history.append(
+            LogRecord(
+                message=message,
+                severity=severity,
+                source=source or "0x???? [UNKNOWN]",
+            )
+        )
 
     def _threat_meter_bar(self, total_changes: int, width: int = 16) -> Text:
         """Horizontal threat meter [██████░░░░░░░░░░] pct%."""
@@ -216,12 +237,17 @@ class RichDashboard:
 
         history_data = [r.total_changes for r in self._scan_history]
         is_critical = bool(self._scan_history and self._scan_history[-1].threshold_exceeded)
+        last_3 = history_data[-3:] if len(history_data) >= 3 else []
+        idle_scans = 3 if (len(last_3) == 3 and all(x == 0 for x in last_3)) else 0
+        recent_peak = max(history_data) if history_data else 0
         body = CyberActivityGraph(
             history_data=history_data,
             threshold=self._threshold,
             width=graph_width,
             height=GRAPH_HEIGHT_ROWS,
             is_critical=is_critical,
+            idle_scans=idle_scans,
+            recent_peak=float(recent_peak),
         )
 
         if self._scan_history:
@@ -252,23 +278,27 @@ class RichDashboard:
         )
 
     def _make_alerts_panel(self) -> Panel:
-        """Recent Alerts: Time, Severity, Message; row color by severity; last 10 only."""
+        """Recent Alerts: Time, Severity, SOURCE [PID/PROC] (dim yellow), Message; last 10 only."""
         table = Table(show_header=True, box=rich_box.SIMPLE if rich_box else None, padding=(0, 1))
         table.add_column("Time", width=10)
         table.add_column("Severity", width=8)
+        table.add_column("SOURCE", width=18, style="dim yellow")
         table.add_column("Message", overflow="fold")
         recent = list(self._log_history)[-10:]
         if recent:
             for rec in recent:
                 row_style = _style_severity(rec.severity)
                 ts = rec.timestamp.strftime("%H:%M:%S") if rec.timestamp else "—"
+                source_text = Text(rec.source, style="dim yellow")
                 table.add_row(
                     Text(ts, style=row_style),
                     Text(rec.severity, style=row_style),
+                    source_text,
                     Text(rec.message, style=row_style),
                 )
         else:
             table.add_row(
+                Text("—", style="dim"),
                 Text("—", style="dim"),
                 Text("—", style="dim"),
                 Text("No alerts yet", style="dim"),

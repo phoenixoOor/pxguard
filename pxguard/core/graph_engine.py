@@ -188,6 +188,8 @@ class CyberActivityGraph:
         height: int = 8,
         label_width: int = 8,
         is_critical: bool = False,
+        idle_scans: int = 0,
+        recent_peak: float = 0,
     ) -> None:
         self.history_data = list(history_data) if history_data else []
         self.threshold = max(1, threshold)
@@ -195,6 +197,8 @@ class CyberActivityGraph:
         self.height = max(2, height)
         self.label_width = max(4, label_width)
         self.is_critical = is_critical
+        self.idle_scans = max(0, idle_scans)
+        self.recent_peak = max(0.0, recent_peak)
 
     def __rich_console__(self, console: Any, options: Any) -> Any:
         from rich.console import Group
@@ -214,7 +218,11 @@ class CyberActivityGraph:
             values = [0] * (data_cols - len(data)) + data
 
         has_data = any(v > 0 for v in values)
-        max_val = max(max(values), thr, 1)
+        # Breathing: when idle (no changes in last 3 scans), shrink y_max so old peaks stay visible
+        if self.idle_scans >= 3 and self.recent_peak > 0:
+            max_val = max(thr, int(self.recent_peak * 0.85), 1)
+        else:
+            max_val = max(max(values), thr, 1)
         max_val_f = float(max_val)
         last_value = values[-1] if values else 0
 

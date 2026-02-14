@@ -2,12 +2,13 @@
 PXGuard - Monitoring engine.
 
 Orchestrates periodic scanning, comparison, threshold checks, and alerting.
-Supports optional rich-based interactive dashboard (config: dashboard.interactive),
-optional watchdog for real-time reaction, interactive graph export, and session report.
+Supports optional rich-based interactive dashboard, process tracking (psutil),
+optional watchdog, interactive graph export, and session report.
 """
 
 import contextlib
 import logging
+import os
 import sys
 import time
 from pathlib import Path
@@ -295,9 +296,14 @@ class FileMonitor:
                             threshold_exceeded=threshold_exceeded,
                             no_baseline=not has_baseline,
                         )
+                        try:
+                            from pxguard.core.process_resolver import format_source as _format_source
+                        except Exception:
+                            _format_source = None
                         for e in events:
                             msg = f"{e.event_type.value}: {e.file_path}"
-                            rich_dash.add_log(msg, e.severity.value)
+                            source = _format_source(e.file_path, os.getpid()) if _format_source else "0x???? [UNKNOWN]"
+                            rich_dash.add_log(msg, e.severity.value, source=source)
                         live.update(rich_dash.get_renderable(), refresh=True)
                         last_scan_time = now
                     except Exception as e:
