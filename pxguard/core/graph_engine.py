@@ -1,17 +1,25 @@
 """
-PXGuard - Graph utilities: Braille real-time terminal graph and HTML/PNG export.
+PXGuard - Graph utilities: CyberActivityGraph (cyber/hacker terminal), Braille graph, HTML/PNG export.
 
-- Braille real-time graph: smooth curve (Unicode Braille), Y-axis, threshold line,
-  color zones (green/yellow/red). For use in rich_dashboard.
+- CyberActivityGraph: matrix grid (dim cyan ·/+), cyber symbols ░▒▓█, bright_cyan/magenta/bright_red+blink,
+  laser threshold line, Y-axis in hex (0x0 / LVL), [ DATA_STREAM: ACTIVE ] indicator. Empty → NO_THREATS_DETECTED.
+- Braille real-time graph: smooth curve, Y-axis, threshold.
 - export_security_graph: Plotly/PNG for security reports.
 """
 
 import logging
 import time
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import Any, List, Optional, Sequence
 
 logger = logging.getLogger(__name__)
+
+# Cyber / Hacker terminal style
+CYBER_BLOCKS = ("\u2591", "\u2592", "\u2593", "\u2588")  # ░ ▒ ▓ █ (light→solid)
+CYBER_GRID_CHAR = "\u00B7"   # · dim grid (radar)
+CYBER_GRID_ALT = "+"        # optional + for grid
+THRESHOLD_CHAR = "\u2550"   # ═ double line (laser)
+THRESHOLD_CHAR_ALT = "\u2500"  # ─
 
 # Braille: 2 cols x 4 rows per character. Dot bits 1..8 -> bit index 0..7.
 # Layout: (row,col) in cell -> dot number 1..8
@@ -141,6 +149,145 @@ def _zone_style_for_value(value: float, threshold: int) -> str:
     return "green"
 
 
+def _cyber_zone_style(value: float, threshold: int) -> str:
+    """Cyberpunk: safe=bright_cyan, near threshold=vivid_magenta, critical=bold bright_red blink."""
+    if threshold <= 0:
+        return "bright_cyan"
+    pct = value / threshold
+    if pct >= 1.0:
+        return "bold bright_red blink"
+    if pct >= 0.5:
+        return "magenta"
+    return "bright_cyan"
+
+
+def _cyber_block_for_ratio(ratio: float) -> str:
+    """Map 0..1 to ░ ▒ ▓ █ (higher = denser)."""
+    if ratio <= 0:
+        return CYBER_BLOCKS[0]
+    idx = min(3, max(0, int(ratio * 4) if ratio < 1.0 else 3))
+    return CYBER_BLOCKS[idx]
+
+
+class CyberActivityGraph:
+    """
+    Cyber Security / Hacker Terminal style graph: matrix grid (dim cyan ·),
+    data as ░▒▓█, safe=bright_cyan, near threshold=magenta, critical=bold bright_red blink.
+    Threshold line ═ bright red (laser). Y-axis 0x0 / LVL:MAX. [ DATA_STREAM: ACTIVE ].
+    Empty state: grid + NO_THREATS_DETECTED.
+    """
+
+    def __init__(
+        self,
+        history_data: List[int],
+        threshold: int,
+        width: int = 60,
+        height: int = 8,
+        label_width: int = 8,
+    ) -> None:
+        self.history_data = list(history_data) if history_data else []
+        self.threshold = max(1, threshold)
+        self.width = max(1, width)
+        self.height = max(2, height)
+        self.label_width = max(4, label_width)
+
+    def __rich_console__(self, console: Any, options: Any) -> Any:
+        from rich.console import Group
+        from rich.text import Text
+
+        w = self.width
+        h = self.height
+        thr = self.threshold
+        grid_style = "dim cyan"
+        data = self.history_data
+
+        # Right-align: last w values; pad left with 0
+        if len(data) >= w:
+            values = data[-w:]
+        else:
+            values = [0] * (w - len(data)) + data
+
+        has_data = any(v > 0 for v in values)
+        max_val = max(max(values), thr, 1)
+        max_val_f = float(max_val)
+
+        # 1) Matrix grid background: dim cyan · (or +)
+        grid_chars: List[List[str]] = [[CYBER_GRID_CHAR] * w for _ in range(h)]
+        grid_styles: List[List[str]] = [[grid_style] * w for _ in range(h)]
+
+        thr_row: Optional[int] = None
+        if max_val_f > 0 and thr <= max_val:
+            r = (h - 1) * (1.0 - thr / max_val_f)
+            thr_row = max(0, min(h - 1, int(round(r))))
+
+        if has_data:
+            for col, v in enumerate(values):
+                if v <= 0:
+                    continue
+                bar_ratio = v / max_val_f
+                n_fill = max(0, min(h, int(round(bar_ratio * h))))
+                if n_fill == 0 and v > 0:
+                    n_fill = 1
+                zone_style = _cyber_zone_style(float(v), thr)
+                for i in range(n_fill):
+                    row = h - 1 - i
+                    if 0 <= row < h:
+                        if thr_row is not None and row == thr_row:
+                            grid_chars[row][col] = THRESHOLD_CHAR
+                            grid_styles[row][col] = "bold red"
+                        else:
+                            # Density: bottom cells lighter, top denser
+                            cell_ratio = (i + 1) / n_fill if n_fill else 1.0
+                            grid_chars[row][col] = _cyber_block_for_ratio(cell_ratio)
+                            grid_styles[row][col] = zone_style
+            if thr_row is not None:
+                for col in range(w):
+                    if grid_chars[thr_row][col] == CYBER_GRID_CHAR:
+                        grid_chars[thr_row][col] = THRESHOLD_CHAR
+                        grid_styles[thr_row][col] = "bold red"
+        else:
+            # Empty: show threshold line only
+            if thr_row is not None:
+                for col in range(w):
+                    grid_chars[thr_row][col] = THRESHOLD_CHAR
+                    grid_styles[thr_row][col] = "bold red"
+
+        max_label = "0x%X" % int(max_val) if max_val < 256 else "LVL:%d" % int(max_val)
+        zero_label = "0x0"
+        label_w = max(self.label_width, len(max_label), len(zero_label))
+
+        lines: List[Any] = []
+        # Top indicator
+        top_line = Text()
+        top_line.append(" " * label_w, style="dim")
+        top_line.append("\u2502", style=grid_style)
+        top_line.append(" [ DATA_STREAM: ACTIVE ] " if has_data else " [ SCANNING... ] ", style="dim cyan")
+        lines.append(top_line)
+
+        for row in range(h):
+            t = Text()
+            if row == 0:
+                t.append(max_label.rjust(label_w), style="dim cyan")
+            elif row == h - 1:
+                t.append(zero_label.rjust(label_w), style="dim cyan")
+            else:
+                t.append(" " * label_w, style="dim")
+            t.append("\u2502", style="bright_black")
+            for col in range(w):
+                ch = grid_chars[row][col]
+                st = grid_styles[row][col] or grid_style
+                t.append(ch, style=st)
+            lines.append(t)
+
+        if not has_data:
+            no_threat = Text()
+            no_threat.append(" " * label_w + " \u2502 ", style="dim")
+            no_threat.append("NO_THREATS_DETECTED", style="dim cyan")
+            lines.append(no_threat)
+
+        yield Group(*lines)
+
+
 def build_activity_monitor_renderable(
     values: list[int],
     threshold: int,
@@ -148,8 +295,8 @@ def build_activity_monitor_renderable(
     height_braille: int = 8,
 ):
     """
-    Build a Rich renderable for the Activity Monitor graph: Y-axis + Braille curve
-    with gradient coloring and threshold line. Returns a Rich Group (for use in Panel).
+    Build a Rich renderable for the Activity Monitor: CyberActivityGraph (cyber/hacker terminal style).
+    Returns CyberActivityGraph or Group for use in Panel.
     """
     try:
         from rich.console import Group
@@ -157,44 +304,23 @@ def build_activity_monitor_renderable(
     except ImportError:
         return None
     if not values:
-        return Group(Text("— waiting for scans —", style="dim"))
-    braille_rows, y_labels, max_val, col_values = render_braille_graph(
-        values, threshold, width_braille=width_braille, height_braille=height_braille
+        return CyberActivityGraph(history_data=[], threshold=threshold, width=max(1, width_braille), height=max(2, height_braille))
+    return CyberActivityGraph(
+        history_data=values,
+        threshold=threshold,
+        width=max(1, width_braille),
+        height=max(2, height_braille),
+        label_width=8,
     )
-    if not braille_rows or not col_values:
-        return Group(Text("— no data —", style="dim"))
-    # Y-axis width (e.g. " 100 " -> 5 chars)
-    y_width = max(len(l[0]) for l in y_labels) + 1
-    # Align Y labels to braille rows (spread 5 labels over height_braille rows)
-    n_br = len(braille_rows)
-    label_row_indices = [int((i / 4) * (n_br - 1)) for i in range(5)]
-    lines: list[Text] = []
-    for row_idx, row_chars in enumerate(braille_rows):
-        y_label = " "
-        for i, (label, _) in enumerate(y_labels):
-            if label_row_indices[i] == row_idx:
-                y_label = label.rjust(y_width)
-                break
-        if y_label == " ":
-            y_label = "".rjust(y_width)
-        # Color each Braille character by column value (green/yellow/red)
-        line = Text(y_label, style="dim")
-        n_cols = len(row_chars)
-        for col_idx, ch in enumerate(row_chars):
-            val = col_values[col_idx] if col_idx < len(col_values) else 0
-            style = _zone_style_for_value(val, threshold)
-            line.append(ch, style=style)
-        lines.append(line)
-    return Group(*lines)
 
 _PLOTLY_LAYOUT = {
-    "paper_bgcolor": "#0d1117",
-    "plot_bgcolor": "#161b22",
+    "paper_color": "#0d1117",
+    "plot_color": "#161b22",
     "font": {"color": "#c9d1d9", "family": "Consolas, monospace"},
-    "title": {"font": {"size": 18}, "x": 0.5, "xanchor": "center"},
-    "xaxis": {"gridcolor": "#30363d", "zerolinecolor": "#30363d", "showgrid": True, "title": "Scan iteration"},
-    "yaxis": {"gridcolor": "#30363d", "zerolinecolor": "#30363d", "showgrid": True, "autorange": True, "title": "Number of changes"},
-    "legend": {"bgcolor": "rgba(22,27,34,0.9)", "bordercolor": "#30363d", "font": {"color": "#c9d1d9"}},
+    "title": {"font": {"size": 18}, "x": 0.5, "anchor": "center"},
+    "axis": {"grid color": "#30363d", "decolorizing": "#30363d", "show grid": True, "title": "Scan iteration"},
+    "yaxis": {"grid color": "#30363d", "decolorizing": "#30363d", "show grid": True, "auto range": True, "title": "Number of changes"},
+    "legend": {"color": "rgba(22,27,34,0.9)", "border color": "#30363d", "font": {"color": "#c9d1d9"}},
     "margin": {"t": 60, "r": 40, "b": 50, "l": 60},
 }
 
@@ -289,4 +415,4 @@ def export_security_graph(
         logger.warning("Failed to save security report PNG: %s", e, exc_info=True)
         png_path = None
 
-    return (html_path, png_path)
+    return html_path, png_path

@@ -1,7 +1,7 @@
 """
-PXGuard - Single professional Rich CLI dashboard (htop-style).
+PXGuard - Single professional Rich CLI dashboard (Cyber Security / Hacker Terminal style).
 
-Layout: Threat Summary | Activity Monitor (Braille real-time graph, Y-axis, threshold) | Recent Alerts.
+Layout: Threat Summary | Activity Monitor (CyberActivityGraph: matrix grid, ░▒▓█, laser threshold) | Recent Alerts.
 Uses real monitor metrics only; no simulated data. Single Live instance.
 """
 
@@ -31,10 +31,10 @@ except ImportError:
 Status = Literal["OK", "WARNING", "CRITICAL"]
 SeverityStr = Literal["INFO", "WARNING", "CRITICAL"]
 
-# Activity Monitor: last N scans, Braille graph, fixed height
+# Activity Monitor: last N scans, CyberActivityGraph (cyber/hacker style), fixed height
 GRAPH_WINDOW_SIZE = 60
-GRAPH_HEIGHT_BRAILLE = 8
-GRAPH_WIDTH_BRAILLE_DEFAULT = 60
+GRAPH_HEIGHT_ROWS = 8
+GRAPH_WIDTH_DEFAULT = 60
 
 
 @dataclass
@@ -81,7 +81,7 @@ def _style_severity(s: SeverityStr) -> str:
 
 class RichDashboard:
     """
-    Single UI layer: Threat Summary, Activity Monitor (Braille graph, 60 scans),
+    Single UI layer: Threat Summary, Activity Monitor (CyberActivityGraph, 60 scans),
     Recent Alerts. All data from monitor; no simulation.
     """
 
@@ -187,29 +187,24 @@ class RichDashboard:
 
     def _make_graph_panel(self) -> Panel:
         """
-        Activity Monitor: Braille real-time graph, Y-axis, threshold line,
-        color zones (green / yellow / red). Fixed height; width from terminal.
+        Activity Monitor: CyberActivityGraph (cyber/hacker terminal). Matrix grid, ░▒▓█,
+        bright_cyan/magenta/bright_red+blink, laser threshold, [ DATA_STREAM: ACTIVE ].
         """
-        from pxguard.core.graph_engine import build_activity_monitor_renderable
+        from pxguard.core.graph_engine import CyberActivityGraph
 
         try:
             console_width = self._console.width if self._console else None
         except Exception:
             console_width = None
-        width_braille = (
-            max(20, (console_width or 80) - 20) // 2
-        ) if console_width else GRAPH_WIDTH_BRAILLE_DEFAULT
+        graph_width = max(20, (console_width or 80) - 24) if console_width else GRAPH_WIDTH_DEFAULT
 
-        records = list(self._scan_history)[-GRAPH_WINDOW_SIZE:]
-        totals = [r.total_changes for r in records]
-        body = build_activity_monitor_renderable(
-            totals,
-            self._threshold,
-            width_braille=width_braille,
-            height_braille=GRAPH_HEIGHT_BRAILLE,
+        history_data = [r.total_changes for r in self._scan_history]
+        body = CyberActivityGraph(
+            history_data=history_data,
+            threshold=self._threshold,
+            width=graph_width,
+            height=GRAPH_HEIGHT_ROWS,
         )
-        if body is None:
-            body = Text("— graph unavailable —", style="dim")
 
         # Subtitle: current change rate and threshold
         if self._scan_history:

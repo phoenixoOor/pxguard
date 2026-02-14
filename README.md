@@ -151,7 +151,7 @@ Optional: `--dry-run` to run compare cycles without writing alerts or changing s
 pxguard simulate-attack
 ```
 
-The simulator either Base64-encodes file contents or renames with `.locked`. Its actions are logged; PXGuard monitor will see MODIFIED/CREATED/DELETED and, if many changes in a short window, CRITICAL threshold alerts.
+The simulator either Base64-encodes file contents or renames with `.locked`. Its actions are logged; PXGuard monitor will see MODIFIED/CREATED/DELETED and, if many changes in a short window, CRITICAL threshold alerts. **Note:** In base64 mode, empty files stay empty (base64 of empty is empty); add some content to files in `test_assets` if you want to see visible changes.
 
 ---
 
