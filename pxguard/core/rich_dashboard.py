@@ -1,15 +1,14 @@
 """
-PXGuard - Rich-based interactive CLI dashboard.
+PXGuard - Single professional Rich CLI dashboard (htop-style).
 
-Live summary, sliding graph of changes, and colored log panel.
-Uses rich Live for smooth updates without screen flicker.
+Layout: Threat Summary | Activity Monitor (Braille real-time graph, Y-axis, threshold) | Recent Alerts.
+Uses real monitor metrics only; no simulated data. Single Live instance.
 """
 
 from collections import deque
 from dataclasses import dataclass
 from typing import Any, Literal, Optional
 
-# Optional rich import; fallback if not installed
 try:
     from rich.console import Group, RenderableType
     from rich.live import Live
@@ -32,10 +31,15 @@ except ImportError:
 Status = Literal["OK", "WARNING", "CRITICAL"]
 SeverityStr = Literal["INFO", "WARNING", "CRITICAL"]
 
+# Activity Monitor: last N scans, Braille graph, fixed height
+GRAPH_WINDOW_SIZE = 60
+GRAPH_HEIGHT_BRAILLE = 8
+GRAPH_WIDTH_BRAILLE_DEFAULT = 60
+
 
 @dataclass
 class ScanRecord:
-    """One scan iteration record for history."""
+    """One scan result; real metrics only."""
 
     iteration: int
     scanned: int
@@ -44,63 +48,73 @@ class ScanRecord:
     created: int
     status: Status
     threshold_exceeded: bool
+    no_baseline: bool = False
+
+    @property
+    def total_changes(self) -> int:
+        return self.created + self.modified + self.deleted
 
 
 @dataclass
 class LogRecord:
-    """One log line for the dashboard."""
+    """One alert line."""
 
     message: str
     severity: SeverityStr
 
 
-def _style_status(status: Status) -> str:
-    if status == "CRITICAL":
+def _style_status(s: Status) -> str:
+    if s == "CRITICAL":
         return "bold red"
-    if status == "WARNING":
+    if s == "WARNING":
         return "bold yellow"
     return "bold green"
 
 
-def _style_severity(severity: SeverityStr) -> str:
-    if severity == "CRITICAL":
+def _style_severity(s: SeverityStr) -> str:
+    if s == "CRITICAL":
         return "red"
-    if severity == "WARNING":
+    if s == "WARNING":
         return "yellow"
     return "green"
 
 
 class RichDashboard:
     """
-    Interactive dashboard: summary panel, sliding graph, log panel.
-    Uses rich Live for flicker-free updates. Limited to last N scans/logs.
+    Single UI layer: Threat Summary, Activity Monitor (Braille graph, 60 scans),
+    Recent Alerts. All data from monitor; no simulation.
     """
 
     def __init__(
         self,
         threshold: int,
-        history_size: int = 30,
+        history_size: int = 60,
         console: Optional[Any] = None,
     ) -> None:
         if not RICH_AVAILABLE:
             raise RuntimeError("rich is required for RichDashboard; install with: pip install rich")
         self._threshold = max(1, threshold)
-        self._history_size = max(10, min(100, history_size))
+        self._history_size = max(GRAPH_WINDOW_SIZE, min(100, history_size))
         self._console = console
         self._scan_history: deque[ScanRecord] = deque(maxlen=self._history_size)
         self._log_history: deque[LogRecord] = deque(maxlen=self._history_size)
         self._iteration = 0
 
-    def add_scan(
+    def update(
         self,
+        *,
         scanned: int,
+        created: int,
         modified: int,
         deleted: int,
-        created: int,
         status: Status,
         threshold_exceeded: bool = False,
+        no_baseline: bool = False,
     ) -> None:
-        """Append one scan result to history (sliding window)."""
+        """
+        Single entry point: push real metrics from monitor after each scan.
+        No fake values.
+        """
         self._iteration += 1
         self._scan_history.append(
             ScanRecord(
@@ -111,121 +125,136 @@ class RichDashboard:
                 created=created,
                 status=status,
                 threshold_exceeded=threshold_exceeded,
+                no_baseline=no_baseline,
             )
         )
 
     def add_log(self, message: str, severity: SeverityStr = "INFO") -> None:
-        """Append one log line to history (sliding window)."""
+        """Append one alert line."""
         self._log_history.append(LogRecord(message=message, severity=severity))
 
-    def _make_summary_panel(self) -> Panel:
-        """Top panel: Scanned, Modified, Created, Deleted, Status with colors."""
+    def _threat_meter_bar(self, total_changes: int, width: int = 16) -> Text:
+        """Horizontal threat meter [██████░░░░░░░░░░] pct%."""
+        if self._threshold <= 0:
+            pct = 0
+        else:
+            pct = min(100, int(100 * total_changes / self._threshold))
+        filled = min(width, int(round((pct / 100) * width)))
+        bar = "█" * filled + "░" * (width - filled)
+        if pct >= 100 or total_changes >= self._threshold:
+            style = "bold red"
+        elif pct >= 50:
+            style = "bold yellow"
+        else:
+            style = "bold green"
+        return Text(f"[{bar}] {pct}%", style=style)
+
+    def _make_threat_summary_panel(self) -> Panel:
+        """Threat Summary: scanned, C/M/D, total, threshold, threat level, threat meter."""
         table = Table(show_header=False, box=None, padding=(0, 2))
         table.add_column(style="dim")
         table.add_column()
         if not self._scan_history:
-            table.add_row("Scanned", "—")
-            table.add_row("Modified", "—")
+            table.add_row("Total scanned", "—")
             table.add_row("Created", "—")
+            table.add_row("Modified", "—")
             table.add_row("Deleted", "—")
-            table.add_row("Status", "[bold green]OK[/]")
+            table.add_row("Total changes", "—")
+            table.add_row("Threshold", str(self._threshold))
+            table.add_row("Threat level", Text("OK", style="bold green"))
+            table.add_row("Threat meter", self._threat_meter_bar(0))
         else:
             r = self._scan_history[-1]
-            table.add_row("Scanned", str(r.scanned))
-            table.add_row("Modified", str(r.modified))
+            total = r.total_changes
+            table.add_row("Total scanned", str(r.scanned))
             table.add_row("Created", str(r.created))
+            table.add_row("Modified", str(r.modified))
             table.add_row("Deleted", str(r.deleted))
-            table.add_row("Status", Text(r.status, style=_style_status(r.status)))
+            table.add_row("Total changes", str(total))
+            table.add_row("Threshold", str(self._threshold))
+            if r.no_baseline:
+                table.add_row("Threat level", Text("No baseline — run 'pxguard init'", style="bold yellow"))
+            else:
+                table.add_row("Threat level", Text(r.status, style=_style_status(r.status)))
+            table.add_row("Threat meter", self._threat_meter_bar(total))
         return Panel(
             table,
-            title="[bold]FILE INTEGRITY MONITOR[/]",
+            title="[bold] Threat Summary [/]",
             border_style="cyan",
+            box=rich_box.ROUNDED,
             padding=(0, 1),
         )
 
     def _make_graph_panel(self) -> Panel:
-        """Middle panel: cyber-security style — one severity-colored bar per scan, C/M/D breakdown, status badge."""
-        if not self._scan_history:
-            return Panel(
-                Text("— waiting for scans —", style="dim"),
-                title="[bold]CHANGE ACTIVITY[/]  [dim]last N scans[/]",
-                border_style="bright_black",
-                padding=(0, 1),
-            )
-        records = list(self._scan_history)[-self._history_size:]
-        max_val = max(1, self._threshold)
-        for r in records:
-            total = r.modified + r.deleted + r.created
-            if total > max_val:
-                max_val = total
-        bar_width = 22
-        table = Table(
-            show_header=True,
-            box=rich_box.ROUNDED if rich_box else None,
-            padding=(0, 1),
-            header_style="bold dim",
-            border_style="bright_black",
-        )
-        table.add_column("#", style="dim", width=4, justify="right")
-        table.add_column("Activity", width=bar_width + 2)
-        table.add_column("C / M / D", style="dim", width=11, justify="right")
-        table.add_column("Status", width=10)
-        for r in records:
-            total = r.modified + r.deleted + r.created
-            bar_style = (
-                "bold red" if r.threshold_exceeded
-                else ("bold yellow" if total >= self._threshold // 2 else "bold green")
-            )
-            bar = self._bar(total, max_val, bar_width, bar_style)
-            c_m_d = Text(f"{r.created} / {r.modified} / {r.deleted}", style="dim")
-            if r.status == "CRITICAL":
-                badge = Text(" CRITICAL ", style="bold white on red")
-            elif r.status == "WARNING":
-                badge = Text(" WARNING ", style="bold black on yellow")
-            else:
-                badge = Text(" OK ", style="bold white on green")
-            table.add_row(str(r.iteration), bar, c_m_d, badge)
-        subtitle = (
-            f"[green]●[/] normal  [yellow]●[/] moderate  [red]●[/] critical  [dim]|  Thr={self._threshold}[/]"
-        )
-        return Panel(
-            table,
-            title="[bold]CHANGE ACTIVITY[/]  [dim]last N scans[/]",
-            subtitle=subtitle,
-            border_style="bright_black",
-            padding=(0, 1),
-        )
+        """
+        Activity Monitor: Braille real-time graph, Y-axis, threshold line,
+        color zones (green / yellow / red). Fixed height; width from terminal.
+        """
+        from pxguard.core.graph_engine import build_activity_monitor_renderable
 
-    def _bar(self, value: int, max_val: int, width: int, style: str = "") -> Text:
-        """One horizontal bar (block chars), optionally styled (e.g. green/yellow/red)."""
-        if max_val <= 0:
-            n = 0
+        try:
+            console_width = self._console.width if self._console else None
+        except Exception:
+            console_width = None
+        width_braille = (
+            max(20, (console_width or 80) - 20) // 2
+        ) if console_width else GRAPH_WIDTH_BRAILLE_DEFAULT
+
+        records = list(self._scan_history)[-GRAPH_WINDOW_SIZE:]
+        totals = [r.total_changes for r in records]
+        body = build_activity_monitor_renderable(
+            totals,
+            self._threshold,
+            width_braille=width_braille,
+            height_braille=GRAPH_HEIGHT_BRAILLE,
+        )
+        if body is None:
+            body = Text("— graph unavailable —", style="dim")
+
+        # Subtitle: current change rate and threshold
+        if self._scan_history:
+            r = self._scan_history[-1]
+            subtitle = Text(
+                " Current: %d changes  |  Threshold: %d  " % (r.total_changes, self._threshold),
+                style="dim",
+            )
         else:
-            n = int(round((value / max_val) * width))
-        n = max(0, min(width, n))
-        filled = "█" * n
-        empty = "░" * (width - n)
-        if style:
-            return Text(filled, style=style) + Text(empty, style="dim")
-        return Text(filled + empty)
+            subtitle = Text(" Current: —  |  Threshold: %d  " % self._threshold, style="dim")
 
-    def _make_log_panel(self) -> Panel:
-        """Bottom panel: last N log lines with severity colors."""
+        return Panel(
+            body,
+            title="[bold] Activity Monitor [/]",
+            subtitle=subtitle,
+            border_style="bold red" if (self._scan_history and self._scan_history[-1].threshold_exceeded) else "bright_black",
+            box=rich_box.ROUNDED,
+            padding=(0, 1),
+        )
+
+    def _make_alerts_panel(self) -> Panel:
+        """Recent Alerts."""
         table = Table(show_header=True, box=rich_box.SIMPLE if rich_box else None, padding=(0, 1))
         table.add_column("Severity", width=8)
         table.add_column("Message", overflow="fold")
-        for rec in list(self._log_history)[-self._history_size:]:
-            table.add_row(Text(rec.severity, style=_style_severity(rec.severity)), rec.message)
-        if not self._log_history:
+        recent = list(self._log_history)[-self._history_size:]
+        if recent:
+            for rec in recent:
+                table.add_row(Text(rec.severity, style=_style_severity(rec.severity)), rec.message)
+        else:
             table.add_row(Text("—", style="dim"), Text("No alerts yet", style="dim"))
-        return Panel(table, title="Recent alerts", border_style="magenta", padding=(0, 1))
+        return Panel(
+            table,
+            title="[bold] Recent Alerts [/]",
+            border_style="magenta",
+            box=rich_box.ROUNDED,
+            padding=(0, 1),
+        )
 
     def get_renderable(self) -> RenderableType:
-        """Single renderable: one summary panel, one graph panel, one log panel. Use only with Live.update()."""
+        """Single renderable for Live.update(). No duplicate panels."""
         return Group(
-            self._make_summary_panel(),
+            self._make_threat_summary_panel(),
             self._make_graph_panel(),
-            self._make_log_panel(),
+            self._make_alerts_panel(),
         )
 
 
@@ -233,11 +262,10 @@ def create_live_dashboard(
     dashboard: RichDashboard,
     console: Optional[Any] = None,
     refresh_per_second: float = 4.0,
-):
+) -> Optional[Any]:
     """
-    Context manager for Rich Live that displays the dashboard.
-    Use only Live.update(dashboard.get_renderable(), refresh=True) to render; no console.print.
-    auto_refresh=False so the display updates only when you call update(), avoiding duplicate panels.
+    Create Rich Live instance. Use only live.update(dashboard.get_renderable(), refresh=True).
+    Single Live; no flicker; smooth refresh every scan.
     """
     if not RICH_AVAILABLE or Live is None:
         return None
@@ -248,27 +276,3 @@ def create_live_dashboard(
         auto_refresh=False,
         transient=False,
     )
-
-
-# ---------------------------------------------------------------------------
-# Example: run with  python -m pxguard.core.rich_dashboard
-# Shows correct usage: only live.update() for rendering, no duplicate panels.
-# ---------------------------------------------------------------------------
-if __name__ == "__main__":
-    import time
-    if not RICH_AVAILABLE:
-        raise SystemExit("rich is required: pip install rich")
-    from rich.console import Console
-    console = Console()
-    dash = RichDashboard(threshold=10, history_size=10, console=console)
-    live = create_live_dashboard(dash, console=console, refresh_per_second=4.0)
-    if live is None:
-        raise SystemExit("Live not available")
-    with live:
-        live.update(dash.get_renderable(), refresh=True)  # initial: "Waiting for scans..."
-        for i in range(1, 6):
-            time.sleep(1)
-            dash.add_scan(scanned=100 + i * 10, modified=i, deleted=0, created=1, status="OK", threshold_exceeded=False)
-            dash.add_log(f"Scan {i} completed", "INFO")
-            live.update(dash.get_renderable(), refresh=True)  # only place we update the display
-    console.print("[green]Done.[/]")

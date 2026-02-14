@@ -7,6 +7,8 @@ monitoring:
     - ./test_assets
 
   scan_interval: 10
+  # watchdog_enabled: false   # set true for real-time reaction (requires: pip install watchdog)
+  # watchdog_debounce_seconds: 2.0
 
   exclude_patterns:
     - "*.log"
@@ -20,8 +22,10 @@ monitoring:
 thresholds:
   change_count: 10
   time_window_seconds: 60
-  # Cooldown after threshold alert (seconds); no repeat alert until cooldown expires or count drops below threshold. Default: same as time_window_seconds.
+  # Cooldown after threshold alert (seconds)
   cooldown_seconds: 60
+  # Anomaly alert cooldown (seconds); default 300 (5 min). Used for report/email on anomaly.
+  # anomaly_cooldown_seconds: 300
 
 dashboard:
   # Set to false for headless/CI (no rich Live, use plain dashboard)
@@ -33,9 +37,13 @@ alerts:
   log_path: ./pxguard/logs/alerts.log
   console_alerts: true
   min_severity: INFO
+  # Email on anomaly: set true and configure env PXGUARD_SMTP_*, PXGUARD_ALERT_TO
+  # email_alerts_enabled: false
 
 paths:
   baseline_file: ./pxguard/baseline/baseline.json
+  # graph_format: html   # interactive Plotly (change_graph.html); use "png" for static
+  # report_summary.txt is written to the same directory as alert log_path
 
 simulator:
   allowed_root: ./test_assets

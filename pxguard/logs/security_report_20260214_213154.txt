@@ -1,0 +1,15 @@
+PXGuard Security Incident Report
+---------------------------------
+
+Timestamp:              2026-02-14 21:31:54 UTC
+Total scans:            1
+Peak change count:      100
+Peak timestamp:         2026-02-14 21:31:54 UTC
+Average baseline:       100.0
+Threshold:              10
+Final status:           WARNING
+Affected files count:   100
+
+Anomaly state:          SUSPICIOUS
+
+---------------------------------
