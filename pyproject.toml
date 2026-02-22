@@ -9,6 +9,7 @@ description = "File Integrity Monitoring (FIM) for Linux - detect unauthorized f
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
+    "python-dotenv>=1.0.0",
     "PyYAML>=6.0",
     "colorama>=0.4.6",
     "matplotlib>=3.7",

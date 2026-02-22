@@ -37,8 +37,14 @@ alerts:
   log_path: ./pxguard/logs/alerts.log
   console_alerts: true
   min_severity: INFO
-  # Email on anomaly: set true and configure env PXGUARD_SMTP_*, PXGUARD_ALERT_TO
-  # email_alerts_enabled: false
+  email_alerts_enabled: true
+  email_to: "gosha.avakian98@gmail.com"
+  attach_visuals: true
+  # SMTP credentials are loaded EXCLUSIVELY from environment variables:
+  #   PXGUARD_SMTP_HOST     (e.g. smtp.gmail.com)
+  #   PXGUARD_SMTP_PORT     (e.g. 587)
+  #   PXGUARD_SMTP_USER     (e.g. your_bot@gmail.com)
+  #   PXGUARD_SMTP_PASSWORD (app password — never put this in YAML)
 
 paths:
   baseline_file: ./pxguard/baseline/baseline.json

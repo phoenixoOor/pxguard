@@ -3,7 +3,7 @@ PXGuard - Monitoring engine.
 
 Orchestrates periodic scanning, comparison, threshold checks, and alerting.
 Supports optional rich-based interactive dashboard, process tracking (psutil),
-optional watchdog, interactive graph export, and session report.
+optional watchdog, interactive graph export, incident email, and session report.
 """
 
 import contextlib
@@ -36,10 +36,6 @@ logger = logging.getLogger(__name__)
 
 @lru_cache(maxsize=128)
 def _resolve_pid_name_cached(normalized_path: str) -> Tuple[Optional[int], Optional[str]]:
-    """
-    Resolve (pid, process_name) for a process that has the file open.
-    Called only when a file change event exists; cached to avoid re-iterating on same path.
-    """
     if psutil is None:
         return None, None
     path = Path(normalized_path)
@@ -54,10 +50,7 @@ def _resolve_pid_name_cached(normalized_path: str) -> Tuple[Optional[int], Optio
                 for f in proc.open_files():
                     try:
                         if Path(f.path).resolve() == path:
-                            return (
-                                proc.info["pid"],
-                                (proc.info.get("name") or "?")[:24],
-                            )
+                            return (proc.info["pid"], (proc.info.get("name") or "?")[:24])
                     except (OSError, RuntimeError):
                         continue
             except (psutil.NoSuchProcess, psutil.AccessDenied):
@@ -67,26 +60,8 @@ def _resolve_pid_name_cached(normalized_path: str) -> Tuple[Optional[int], Optio
     return None, None
 
 
-def _resolve_source_process(file_path: str, self_pid: Optional[int] = None) -> str:
-    """
-    Return source string for dashboard: 0xPID [name], 0xPID [SELF], or 0x???? [UNKNOWN].
-    Search runs only when file was changed/created (call site); cache avoids stutter.
-    """
-    try:
-        normalized = str(Path(file_path).resolve())
-    except (OSError, RuntimeError):
-        normalized = file_path
-    pid, name = _resolve_pid_name_cached(normalized)
-    if pid is None:
-        return "0x???? [UNKNOWN]"
-    if self_pid is not None and pid == self_pid:
-        return "0x%X [SELF]" % pid
-    return "0x%X [%s]" % (pid, (name or "?")[:20])
-
-
 @contextlib.contextmanager
 def _suppress_stderr_logging():
-    """Context manager that suppresses logging to stderr so Rich Live in-place updates are not corrupted."""
     stderr_handlers = [
         h for h in logging.root.handlers
         if getattr(h, "stream", None) is sys.stderr
@@ -111,7 +86,6 @@ def _suppress_stderr_logging():
 
 
 def _use_rich_dashboard(config: dict[str, Any]) -> bool:
-    """True if interactive rich dashboard should be used (config + TTY + rich available)."""
     if not config.get("dashboard_interactive", True):
         return False
     if not sys.stderr.isatty():
@@ -121,6 +95,23 @@ def _use_rich_dashboard(config: dict[str, Any]) -> bool:
         return bool(RICH_AVAILABLE)
     except Exception:
         return False
+
+
+def _init_notifier(config: dict[str, Any]) -> Optional[Any]:
+    """
+    Create and verify IncidentNotifier when email is enabled.
+    Performs SMTP health check (connect + TLS + login).
+    Returns notifier instance or None.
+    """
+    if not config.get("email_alerts_enabled", False):
+        return None
+    from pxguard.core.notifier import IncidentNotifier
+    notifier = IncidentNotifier(config)
+    if not notifier.is_configured:
+        logger.warning("[EMAIL] Email alerts enabled but SMTP is not fully configured — skipping")
+        return None
+    notifier.verify_smtp()
+    return notifier
 
 
 class FileMonitor:
@@ -174,13 +165,9 @@ class FileMonitor:
                 cooldown_seconds=anomaly_cooldown,
             )
         )
+        self._notifier = _init_notifier(config)
 
     def run_once(self) -> tuple[list, int, bool]:
-        """
-        Perform one compare cycle.
-        Returns (list of FIMEvent, scanned file count, has_baseline).
-        When baseline is missing/empty, still scans to get file count and returns has_baseline=False.
-        """
         baseline = self.comparator.load_baseline(self.baseline_path)
         current = self.scanner.scan_directories(self._dirs, self._root)
         scanned = len(current)
@@ -194,11 +181,6 @@ class FileMonitor:
         return events, scanned, True
 
     def _get_process_by_file(self, file_path: str) -> str:
-        """
-        Find process that has this file open via psutil.process_iter(['pid', 'name', 'open_files']).
-        Run only for Modified/Created events to avoid slowing the monitor.
-        Returns 0xPID [name], 0xPID [SELF] if our PID, or 0x???? [UNKNOWN] if not found.
-        """
         try:
             normalized = str(Path(file_path).resolve())
         except (OSError, RuntimeError):
@@ -210,8 +192,80 @@ class FileMonitor:
             return "0x%X [SELF]" % pid
         return "0x%X [%s]" % (pid, (name or "?")[:20])
 
+    def _generate_incident_artifacts(
+        self,
+        change_graph: ChangeGraph,
+        status: str,
+        anomaly_result: Any,
+        total: int,
+    ) -> Tuple[Optional[Path], Optional[Path]]:
+        """Generate report .txt and graph PNG/HTML. Returns (report_path, png_path)."""
+        log_dir = Path(self.config["alert_log_path"]).parent
+        ts = time.time()
+        ts_str = time.strftime("%Y%m%d_%H%M%S", time.gmtime(ts))
+        report_path = log_dir / ("security_report_%s.txt" % ts_str)
+        it, cr, md, dl = change_graph.get_series()
+        totals_list = [a + b + c for a, b, c in zip(cr, md, dl)]
+        avg_baseline = sum(totals_list) / len(totals_list) if totals_list else 0
+        generate_security_report(
+            report_path,
+            timestamp=ts,
+            total_scans=self._session_total_scans,
+            peak_change_count=self._session_max_changes,
+            peak_timestamp=self._session_peak_timestamp,
+            average_baseline=avg_baseline,
+            threshold=self.config["threshold_change_count"],
+            final_status=status,
+            affected_files_count=total,
+            anomaly_state=anomaly_result.state,
+        )
+        from pxguard.core.graph_engine import export_security_graph
+        spike_idx = [len(it) - 1] if anomaly_result.spike_detected or anomaly_result.static_exceeded else []
+        _html_p, png_p = export_security_graph(
+            log_dir, it, cr, md, dl,
+            self.config["threshold_change_count"],
+            timestamp=ts,
+            spike_indices=spike_idx,
+        )
+        return report_path, png_p
+
+    def _send_incident_email(
+        self,
+        report_path: Path,
+        png_p: Optional[Path],
+        status: str,
+        anomaly_result: Any,
+        created: int,
+        modified: int,
+        deleted: int,
+        total: int,
+        rich_dash: Optional[Any] = None,
+    ) -> None:
+        """Send incident email via notifier. Log warning on failure, push to dashboard."""
+        if not self._notifier:
+            return
+        ts_str = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+        ok = self._notifier.send_incident(
+            report_path=report_path,
+            chart_path=png_p,
+            severity=status,
+            created=created,
+            modified=modified,
+            deleted=deleted,
+            total=total,
+            threshold=self.config["threshold_change_count"],
+            timestamp_str=ts_str,
+            anomaly_state=anomaly_result.state,
+            total_scans=self._session_total_scans,
+            peak_changes=self._session_max_changes,
+        )
+        if not ok and rich_dash is not None:
+            try:
+                rich_dash.add_log("Email alert failed — check SMTP settings", "WARNING")
+            except Exception:
+                pass
+
     def run(self) -> None:
-        """Run monitoring loop until stop_event is True."""
         logger.info(
             "Starting PXGuard monitor (interval=%ds, dry_run=%s)",
             self.scan_interval,
@@ -245,7 +299,6 @@ class FileMonitor:
         logger.info("PXGuard monitor stopped.")
 
     def _run_with_rich_dashboard(self, change_graph: ChangeGraph) -> None:
-        """Monitor loop with rich Live dashboard (summary + graph + logs). Optional watchdog."""
         from pxguard.core.rich_dashboard import RichDashboard, create_live_dashboard
 
         threshold = self.config["threshold_change_count"]
@@ -322,44 +375,14 @@ class FileMonitor:
                             or anomaly_result.static_exceeded
                         )
                         if anomaly_result.is_anomaly and change_graph.has_data():
-                            log_dir = Path(self.config["alert_log_path"]).parent
-                            ts = time.time()
-                            ts_str = time.strftime("%Y%m%d_%H%M%S", time.gmtime(ts))
-                            report_path = log_dir / ("security_report_%s.txt" % ts_str)
-                            it, cr, md, dl = change_graph.get_series()
-                            totals_list = [a + b + c for a, b, c in zip(cr, md, dl)]
-                            avg_baseline = sum(totals_list) / len(totals_list) if totals_list else 0
-                            generate_security_report(
-                                report_path,
-                                timestamp=ts,
-                                total_scans=self._session_total_scans,
-                                peak_change_count=self._session_max_changes,
-                                peak_timestamp=self._session_peak_timestamp,
-                                average_baseline=avg_baseline,
-                                threshold=self.config["threshold_change_count"],
-                                final_status=status,
-                                affected_files_count=total,
-                                anomaly_state=anomaly_result.state,
+                            report_path, png_p = self._generate_incident_artifacts(
+                                change_graph, status, anomaly_result, total,
                             )
-                            from pxguard.core.graph_engine import export_security_graph
-                            spike_idx = [len(it) - 1] if anomaly_result.spike_detected or anomaly_result.static_exceeded else []
-                            _html_p, png_p = export_security_graph(
-                                log_dir, it, cr, md, dl,
-                                self.config["threshold_change_count"],
-                                timestamp=ts,
-                                spike_indices=spike_idx,
+                            self._send_incident_email(
+                                report_path, png_p, status, anomaly_result,
+                                created, modified, deleted, total,
+                                rich_dash=rich_dash,
                             )
-                            if self.config.get("email_alerts_enabled", False):
-                                from pxguard.core.email_engine import send_alert_email
-                                body = (
-                                    "PXGuard detected anomalous file activity.\n\n"
-                                    "Total scans: %d\nPeak changes: %d\nStatus: %s\nAnomaly state: %s\n\n"
-                                    "See attached report and graph."
-                                ) % (self._session_total_scans, self._session_max_changes, status, anomaly_result.state)
-                                attachments = [report_path]
-                                if png_p:
-                                    attachments.append(png_p)
-                                send_alert_email(body_text=body, attachment_paths=attachments)
                         rich_dash.update(
                             scanned=scanned,
                             created=created,
@@ -394,7 +417,6 @@ class FileMonitor:
                 pass
 
     def _run_with_plain_dashboard(self, change_graph: ChangeGraph) -> None:
-        """Monitor loop with plain dashboard and terminal graph. Optional watchdog."""
         dashboard = Dashboard()
         terminal_graph = TerminalGraph(
             threshold=self.config["threshold_change_count"],
@@ -460,44 +482,13 @@ class FileMonitor:
                         status = self.anomaly_engine.threat_level_for_dashboard()
                     self._session_final_status = status
                     if anomaly_result.is_anomaly and change_graph.has_data():
-                        log_dir = Path(self.config["alert_log_path"]).parent
-                        ts = time.time()
-                        ts_str = time.strftime("%Y%m%d_%H%M%S", time.gmtime(ts))
-                        report_path = log_dir / ("security_report_%s.txt" % ts_str)
-                        it, cr, md, dl = change_graph.get_series()
-                        totals_list = [a + b + c for a, b, c in zip(cr, md, dl)]
-                        avg_baseline = sum(totals_list) / len(totals_list) if totals_list else 0
-                        generate_security_report(
-                            report_path,
-                            timestamp=ts,
-                            total_scans=self._session_total_scans,
-                            peak_change_count=self._session_max_changes,
-                            peak_timestamp=self._session_peak_timestamp,
-                            average_baseline=avg_baseline,
-                            threshold=self.config["threshold_change_count"],
-                            final_status=status,
-                            affected_files_count=change_count,
-                            anomaly_state=anomaly_result.state,
+                        report_path, png_p = self._generate_incident_artifacts(
+                            change_graph, status, anomaly_result, change_count,
                         )
-                        from pxguard.core.graph_engine import export_security_graph
-                        spike_idx = [len(it) - 1] if anomaly_result.spike_detected or anomaly_result.static_exceeded else []
-                        _html_p, png_p = export_security_graph(
-                            log_dir, it, cr, md, dl,
-                            self.config["threshold_change_count"],
-                            timestamp=ts,
-                            spike_indices=spike_idx,
+                        self._send_incident_email(
+                            report_path, png_p, status, anomaly_result,
+                            created, modified, deleted, change_count,
                         )
-                        if self.config.get("email_alerts_enabled", False):
-                            from pxguard.core.email_engine import send_alert_email
-                            body = (
-                                "PXGuard detected anomalous file activity.\n\n"
-                                "Total scans: %d\nPeak changes: %d\nStatus: %s\nAnomaly state: %s\n\n"
-                                "See attached report and graph."
-                            ) % (self._session_total_scans, self._session_max_changes, status, anomaly_result.state)
-                            attachments = [report_path]
-                            if png_p:
-                                attachments.append(png_p)
-                            send_alert_email(body_text=body, attachment_paths=attachments)
                     terminal_graph.update(change_count)
                     dashboard.update(
                         scanned=scanned,

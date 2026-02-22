@@ -74,6 +74,9 @@ Thumbs.db
 # Session files
 session_*
 
+# Local secrets (passwords, etc.)
+.env
+
 test_assets/*
 pxguard/logs/change_graph.png
 pxguard/baseline/*.json

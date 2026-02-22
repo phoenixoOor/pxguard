@@ -5,11 +5,20 @@ PXGuard - CLI entry point.
 Exposed as the 'pxguard' console command via pyproject.toml.
 """
 
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    _env_path = Path.cwd() / ".env"
+    if _env_path.is_file():
+        load_dotenv(_env_path)
+except ImportError:
+    pass
+
 import argparse
 import logging
 import signal
 import sys
-from pathlib import Path
 
 
 def setup_logging(verbose: bool = False) -> None:

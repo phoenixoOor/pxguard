@@ -2,13 +2,51 @@
 PXGuard - Configuration loader.
 
 Loads and validates config.yaml; resolves paths relative to project root.
+SMTP credentials are loaded ONLY from environment variables (never from YAML).
 """
 
 import logging
+import os
 from pathlib import Path
 from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
+
+_SMTP_ENV_VARS = {
+    "PXGUARD_SMTP_HOST": "SMTP server hostname (e.g. smtp.gmail.com)",
+    "PXGUARD_SMTP_PORT": "SMTP server port (e.g. 587)",
+    "PXGUARD_SMTP_USER": "SMTP login username / sender address",
+    "PXGUARD_SMTP_PASSWORD": "SMTP password or app-password",
+}
+
+
+def _validate_email_env(email_alerts_enabled: bool) -> dict[str, Any]:
+    """
+    When email_alerts_enabled is True, read and validate SMTP env vars.
+    Raises RuntimeError if any required variable is missing.
+    Returns dict with smtp_host, smtp_port, smtp_user, smtp_password.
+    """
+    if not email_alerts_enabled:
+        return {
+            "smtp_host": None,
+            "smtp_port": 587,
+            "smtp_user": None,
+            "smtp_password": None,
+        }
+    missing = [name for name in _SMTP_ENV_VARS if not os.environ.get(name, "").strip()]
+    if missing:
+        lines = ["Email alerts are enabled but required environment variables are missing:"]
+        for name in missing:
+            lines.append(f"  {name}  — {_SMTP_ENV_VARS[name]}")
+        lines.append("")
+        lines.append("Set them in your shell or in a .env file, then restart PXGuard.")
+        raise RuntimeError("\n".join(lines))
+    return {
+        "smtp_host": os.environ["PXGUARD_SMTP_HOST"].strip(),
+        "smtp_port": max(1, min(65535, int(os.environ.get("PXGUARD_SMTP_PORT", "587")))),
+        "smtp_user": os.environ["PXGUARD_SMTP_USER"].strip(),
+        "smtp_password": os.environ["PXGUARD_SMTP_PASSWORD"],
+    }
 
 
 def load_config(config_path: Path, project_root: Optional[Path] = None) -> dict[str, Any]:
@@ -62,6 +100,10 @@ def load_config(config_path: Path, project_root: Optional[Path] = None) -> dict[
     console_alerts = bool(alerts_raw.get("console_alerts", True))
     min_severity = str(alerts_raw.get("min_severity", "INFO")).upper()
     email_alerts_enabled = bool(alerts_raw.get("email_alerts_enabled", False))
+    email_to = str(alerts_raw.get("email_to", "")).strip() or None
+    attach_visuals = bool(alerts_raw.get("attach_visuals", True))
+
+    smtp = _validate_email_env(email_alerts_enabled)
 
     paths_raw = raw.get("paths", {})
     baseline_file = paths_raw.get("baseline_file", "./baseline/baseline.json")
@@ -96,6 +138,12 @@ def load_config(config_path: Path, project_root: Optional[Path] = None) -> dict[
         "console_alerts": console_alerts,
         "min_severity": min_severity,
         "email_alerts_enabled": email_alerts_enabled,
+        "email_to": email_to,
+        "smtp_host": smtp["smtp_host"],
+        "smtp_port": smtp["smtp_port"],
+        "smtp_user": smtp["smtp_user"],
+        "smtp_password": smtp["smtp_password"],
+        "attach_visuals": attach_visuals,
         "baseline_path": resolve(baseline_file),
         "simulator_allowed_root": resolve(allowed_root),
         "graph_format": graph_format,
