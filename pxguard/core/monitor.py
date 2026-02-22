@@ -20,6 +20,7 @@ from pxguard.core.comparator import BaselineComparator
 from pxguard.core.dashboard import Dashboard
 from pxguard.core.graph import ChangeGraph, TerminalGraph
 from pxguard.core.models import EventType, Severity
+from pxguard.core.event_capture import EventCaptureThread, ProcessCaptureCache
 from pxguard.core.process_resolver import ProcessResolver, ProcessInfo, UNKNOWN_PROCESS
 from pxguard.core.reaction_engine import ReactionEngine
 from pxguard.core.report import write_session_report
@@ -136,6 +137,12 @@ class FileMonitor:
             )
         )
         self._resolver = ProcessResolver()
+        self._capture_cache = ProcessCaptureCache(ttl=float(self.scan_interval * 3))
+        self._capture = EventCaptureThread(
+            directories=[str(d) for d in dirs],
+            resolver=self._resolver,
+            cache=self._capture_cache,
+        )
         self._reaction = ReactionEngine(
             enabled=config.get("reaction_enabled", False),
         )
@@ -154,23 +161,31 @@ class FileMonitor:
             self.alert_manager.emit_batch(events)
         return events, scanned, True
 
-    def _resolve_process(self, file_path: str) -> ProcessInfo:
-        """Resolve the process holding a file open."""
-        return self._resolver.resolve(file_path)
-
     def _resolve_all_events(self, events: list) -> list[tuple]:
         """
         Pipeline stage: process_resolver.
-        Returns list of (event, ProcessInfo) tuples.
-        Only resolves for MODIFIED/CREATED; others get UNKNOWN_PROCESS.
+        1. Batch-resolves via psutil process-table scan.
+        2. For any still-unresolved events, checks the real-time inotify
+           capture cache (which caught the process at event time).
         """
+        all_paths = [e.file_path for e in events]
+        if all_paths:
+            batch = self._resolver.resolve_batch(all_paths)
+        else:
+            batch = {}
+
         resolved = []
         for e in events:
-            if e.event_type in (EventType.MODIFIED, EventType.CREATED):
-                proc_info = self._resolve_process(e.file_path)
-            else:
-                proc_info = UNKNOWN_PROCESS
-            resolved.append((e, proc_info))
+            info = batch.get(e.file_path, UNKNOWN_PROCESS)
+            if not info.resolved:
+                try:
+                    abs_path = str(Path(e.file_path).resolve())
+                except (OSError, RuntimeError):
+                    abs_path = e.file_path
+                cached = self._capture_cache.get(abs_path)
+                if cached is not None and cached.resolved:
+                    info = cached
+            resolved.append((e, info))
         return resolved
 
     def _react_to_events(self, resolved_events: list[tuple]) -> list:
@@ -286,6 +301,7 @@ class FileMonitor:
             self.scan_interval,
             self.dry_run,
         )
+        self._capture.start()
         change_graph = ChangeGraph()
         use_rich = _use_rich_dashboard(self.config)
         try:
@@ -294,6 +310,7 @@ class FileMonitor:
             else:
                 self._run_with_plain_dashboard(change_graph)
         finally:
+            self._capture.stop()
             log_dir = Path(self.config["alert_log_path"]).parent
             if not self.dry_run:
                 graph_fmt = self.config.get("graph_format", "html")
