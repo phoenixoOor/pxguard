@@ -239,12 +239,20 @@ class FileMonitor:
         modified: int,
         deleted: int,
         total: int,
+        events: Optional[list] = None,
         rich_dash: Optional[Any] = None,
     ) -> None:
         """Send incident email via notifier. Log warning on failure, push to dashboard."""
         if not self._notifier:
             return
         ts_str = time.strftime("%Y-%m-%d %H:%M:%S UTC", time.gmtime())
+        changed_files = []
+        if events:
+            for e in events:
+                changed_files.append({
+                    "event": e.event_type.value,
+                    "path": str(e.file_path),
+                })
         ok = self._notifier.send_incident(
             report_path=report_path,
             chart_path=png_p,
@@ -254,10 +262,12 @@ class FileMonitor:
             deleted=deleted,
             total=total,
             threshold=self.config["threshold_change_count"],
+            cooldown_seconds=int(self.config.get("anomaly_cooldown_seconds", 300)),
             timestamp_str=ts_str,
             anomaly_state=anomaly_result.state,
             total_scans=self._session_total_scans,
             peak_changes=self._session_max_changes,
+            changed_files=changed_files,
         )
         if not ok and rich_dash is not None:
             try:
@@ -381,7 +391,7 @@ class FileMonitor:
                             self._send_incident_email(
                                 report_path, png_p, status, anomaly_result,
                                 created, modified, deleted, total,
-                                rich_dash=rich_dash,
+                                events=events, rich_dash=rich_dash,
                             )
                         rich_dash.update(
                             scanned=scanned,
@@ -488,6 +498,7 @@ class FileMonitor:
                         self._send_incident_email(
                             report_path, png_p, status, anomaly_result,
                             created, modified, deleted, change_count,
+                            events=events,
                         )
                     terminal_graph.update(change_count)
                     dashboard.update(

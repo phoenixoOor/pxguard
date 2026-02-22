@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PXGuard Security Alert</title>
+</head>
+<body style="margin:0;padding:0;background-color:#0d1117;color:#c9d1d9;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+
+  <!-- Wrapper table for email-client compatibility -->
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="background-color:#0d1117;">
+    <tr>
+      <td align="center" style="padding:24px 12px;">
+
+        <!-- Main container -->
+        <table role="presentation" width="620" cellpadding="0" cellspacing="0" border="0" style="max-width:620px;width:100%;">
+
+          <!-- Header -->
+          <tr>
+            <td style="background-color:#161b22;border:1px solid #30363d;border-radius:10px 10px 0 0;padding:24px 20px;text-align:center;">
+              <h1 style="margin:0 0 10px 0;font-size:22px;color:#58a6ff;font-weight:700;">
+                &#x1f6e1; PXGuard Security Alert
+              </h1>
+              {% if severity == "CRITICAL" %}
+              <span style="display:inline-block;padding:5px 16px;border-radius:14px;font-weight:700;font-size:13px;letter-spacing:0.5px;background-color:#f85149;color:#ffffff;">
+                CRITICAL
+              </span>
+              {% elif severity == "WARNING" %}
+              <span style="display:inline-block;padding:5px 16px;border-radius:14px;font-weight:700;font-size:13px;letter-spacing:0.5px;background-color:#d29922;color:#ffffff;">
+                WARNING
+              </span>
+              {% else %}
+              <span style="display:inline-block;padding:5px 16px;border-radius:14px;font-weight:700;font-size:13px;letter-spacing:0.5px;background-color:#3fb950;color:#ffffff;">
+                OK
+              </span>
+              {% endif %}
+            </td>
+          </tr>
+
+          <!-- Body -->
+          <tr>
+            <td style="background-color:#161b22;border:1px solid #30363d;border-top:none;padding:20px;">
+
+              <!-- Incident summary table -->
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;margin:0 0 16px 0;">
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;width:45%;">Threat Level</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ severity }}</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Anomaly State</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ anomaly_state }}</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Created</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ created }}</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Modified</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ modified }}</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Deleted</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ deleted }}</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Total Changes</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ total }}</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Threshold</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ threshold }}</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Cooldown</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ cooldown_seconds }}s</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Total Scans</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ total_scans }}</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Peak Changes</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ peak_changes }}</td>
+                </tr>
+                <tr>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#8b949e;font-size:14px;">Timestamp</td>
+                  <td style="padding:9px 12px;border-bottom:1px solid #21262d;color:#c9d1d9;font-size:14px;font-weight:600;">{{ timestamp_str }}</td>
+                </tr>
+              </table>
+
+              <!-- Graph image (CID embedded) -->
+              {% if has_graph %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">
+                <tr>
+                  <td align="center" style="padding:0;">
+                    <img src="cid:{{ graph_cid }}" alt="PXGuard Activity Graph"
+                         style="max-width:100%;border-radius:6px;border:1px solid #30363d;display:block;" />
+                  </td>
+                </tr>
+              </table>
+              {% endif %}
+
+              <!-- Changed files list -->
+              {% if changed_files %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">
+                <tr>
+                  <td style="padding:8px 0 6px 0;color:#58a6ff;font-size:14px;font-weight:600;border-bottom:1px solid #30363d;">
+                    Changed Files ({{ changed_files|length }})
+                  </td>
+                </tr>
+                {% for file in changed_files[:25] %}
+                <tr>
+                  <td style="padding:4px 12px;color:#c9d1d9;font-size:13px;font-family:'SFMono-Regular',Consolas,monospace;border-bottom:1px solid #161b22;">
+                    <span style="color:{% if file.event == 'CREATED' %}#3fb950{% elif file.event == 'DELETED' %}#f85149{% else %}#d29922{% endif %};font-weight:600;">{{ file.event }}</span>
+                    &nbsp; {{ file.path }}
+                  </td>
+                </tr>
+                {% endfor %}
+                {% if changed_files|length > 25 %}
+                <tr>
+                  <td style="padding:6px 12px;color:#8b949e;font-size:12px;font-style:italic;">
+                    ... and {{ changed_files|length - 25 }} more files
+                  </td>
+                </tr>
+                {% endif %}
+              </table>
+              {% endif %}
+
+              <!-- Explanation -->
+              <p style="color:#8b949e;font-size:13px;line-height:1.6;margin:16px 0 0 0;">
+                PXGuard detected file activity that exceeded the configured threshold.
+                Review the attached report for full details and the activity graph above
+                for a visual timeline of changes.
+              </p>
+
+            </td>
+          </tr>
+
+          <!-- Footer -->
+          <tr>
+            <td style="background-color:#161b22;border:1px solid #30363d;border-top:none;border-radius:0 0 10px 10px;padding:14px 20px;text-align:center;">
+              <p style="margin:0;color:#484f58;font-size:11px;">
+                PXGuard &mdash; File Integrity Monitoring &bull; Automated Incident Report
+              </p>
+              <p style="margin:4px 0 0 0;color:#484f58;font-size:11px;">
+                Generated: {{ generated_at }}
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+
+</body>
+</html>
