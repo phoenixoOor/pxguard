@@ -66,6 +66,7 @@ class IncidentNotifier:
         total_scans: int = 0,
         peak_changes: int = 0,
         changed_files: Optional[list[dict]] = None,
+        reaction_actions: Optional[list[dict]] = None,
     ) -> bool:
         """
         Build and send incident email.
@@ -106,6 +107,7 @@ class IncidentNotifier:
             timestamp_str=timestamp_str,
             has_graph=has_chart,
             changed_files=changed_files or [],
+            reaction_actions=reaction_actions or [],
             report_body=report_body,
         )
 

@@ -66,7 +66,7 @@ class LogRecord:
     message: str
     severity: SeverityStr
     timestamp: Optional[datetime] = None
-    source: str = "0x???? [UNKNOWN]"
+    source: str = "[UNKNOWN_PROCESS]"
 
     def __post_init__(self) -> None:
         if self.timestamp is None:

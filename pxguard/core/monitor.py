@@ -1,24 +1,18 @@
 """
 PXGuard - Monitoring engine.
 
-Orchestrates periodic scanning, comparison, threshold checks, and alerting.
-Supports optional rich-based interactive dashboard, process tracking (psutil),
-optional watchdog, interactive graph export, incident email, and session report.
+Pipeline:  monitoring → process_resolver → analyzer → reaction_engine → alert_service
+
+Orchestrates periodic scanning, comparison, threshold checks, process
+resolution, automated reaction (on CRITICAL), and alerting/email.
 """
 
 import contextlib
 import logging
-import os
 import sys
 import time
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Callable, Optional, Tuple
-
-try:
-    import psutil
-except ImportError:
-    psutil = None
 
 from pxguard.core.alerts import AlertManager
 from pxguard.core.anomaly_engine import AnomalyConfig, AnomalyEngine
@@ -26,38 +20,14 @@ from pxguard.core.comparator import BaselineComparator
 from pxguard.core.dashboard import Dashboard
 from pxguard.core.graph import ChangeGraph, TerminalGraph
 from pxguard.core.models import EventType, Severity
+from pxguard.core.process_resolver import ProcessResolver, ProcessInfo, UNKNOWN_PROCESS
+from pxguard.core.reaction_engine import ReactionEngine
 from pxguard.core.report import write_session_report
 from pxguard.core.report_engine import generate_security_report
 from pxguard.core.scanner import DirectoryScanner
 from pxguard.core.thresholds import ThresholdConfig, ThresholdTracker
 
 logger = logging.getLogger(__name__)
-
-
-@lru_cache(maxsize=128)
-def _resolve_pid_name_cached(normalized_path: str) -> Tuple[Optional[int], Optional[str]]:
-    if psutil is None:
-        return None, None
-    path = Path(normalized_path)
-    if not path.is_absolute():
-        try:
-            path = path.resolve()
-        except (OSError, RuntimeError):
-            return None, None
-    try:
-        for proc in psutil.process_iter(["pid", "name", "open_files"]):
-            try:
-                for f in proc.open_files():
-                    try:
-                        if Path(f.path).resolve() == path:
-                            return (proc.info["pid"], (proc.info.get("name") or "?")[:24])
-                    except (OSError, RuntimeError):
-                        continue
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
-                continue
-    except Exception as e:
-        logger.debug("Process resolve failed for %s: %s", normalized_path, e)
-    return None, None
 
 
 @contextlib.contextmanager
@@ -165,6 +135,10 @@ class FileMonitor:
                 cooldown_seconds=anomaly_cooldown,
             )
         )
+        self._resolver = ProcessResolver()
+        self._reaction = ReactionEngine(
+            enabled=config.get("reaction_enabled", False),
+        )
         self._notifier = _init_notifier(config)
 
     def run_once(self) -> tuple[list, int, bool]:
@@ -180,17 +154,42 @@ class FileMonitor:
             self.alert_manager.emit_batch(events)
         return events, scanned, True
 
-    def _get_process_by_file(self, file_path: str) -> str:
-        try:
-            normalized = str(Path(file_path).resolve())
-        except (OSError, RuntimeError):
-            normalized = file_path
-        pid, name = _resolve_pid_name_cached(normalized)
-        if pid is None:
-            return "0x???? [UNKNOWN]"
-        if pid == os.getpid():
-            return "0x%X [SELF]" % pid
-        return "0x%X [%s]" % (pid, (name or "?")[:20])
+    def _resolve_process(self, file_path: str) -> ProcessInfo:
+        """Resolve the process holding a file open."""
+        return self._resolver.resolve(file_path)
+
+    def _resolve_all_events(self, events: list) -> list[tuple]:
+        """
+        Pipeline stage: process_resolver.
+        Returns list of (event, ProcessInfo) tuples.
+        Only resolves for MODIFIED/CREATED; others get UNKNOWN_PROCESS.
+        """
+        resolved = []
+        for e in events:
+            if e.event_type in (EventType.MODIFIED, EventType.CREATED):
+                proc_info = self._resolve_process(e.file_path)
+            else:
+                proc_info = UNKNOWN_PROCESS
+            resolved.append((e, proc_info))
+        return resolved
+
+    def _react_to_events(self, resolved_events: list[tuple]) -> list:
+        """
+        Pipeline stage: reaction_engine.
+        Evaluates each CRITICAL event and triggers automated response.
+        Returns list of ReactionRecords.
+        """
+        records = []
+        for e, proc_info in resolved_events:
+            if e.severity == Severity.CRITICAL and proc_info.resolved:
+                rec = self._reaction.react(
+                    file_path=e.file_path,
+                    severity=e.severity.value,
+                    process_info=proc_info,
+                )
+                if rec is not None:
+                    records.append(rec)
+        return records
 
     def _generate_incident_artifacts(
         self,
@@ -241,6 +240,7 @@ class FileMonitor:
         total: int,
         events: Optional[list] = None,
         rich_dash: Optional[Any] = None,
+        reaction_records: Optional[list] = None,
     ) -> None:
         """Send incident email via notifier. Log warning on failure, push to dashboard."""
         if not self._notifier:
@@ -253,6 +253,10 @@ class FileMonitor:
                     "event": e.event_type.value,
                     "path": str(e.file_path),
                 })
+        reaction_data = []
+        if reaction_records:
+            for r in reaction_records:
+                reaction_data.append(r.to_dict())
         ok = self._notifier.send_incident(
             report_path=report_path,
             chart_path=png_p,
@@ -268,6 +272,7 @@ class FileMonitor:
             total_scans=self._session_total_scans,
             peak_changes=self._session_max_changes,
             changed_files=changed_files,
+            reaction_actions=reaction_data,
         )
         if not ok and rich_dash is not None:
             try:
@@ -384,6 +389,18 @@ class FileMonitor:
                             any(e.severity == Severity.CRITICAL and e.metadata.get("threshold_exceeded") for e in events)
                             or anomaly_result.static_exceeded
                         )
+
+                        resolved_events = self._resolve_all_events(events)
+
+                        reaction_records = self._react_to_events(resolved_events)
+                        for rec in reaction_records:
+                            if rec.success:
+                                rich_dash.add_log(
+                                    "[REACTION] %s pid=%d %s" % (rec.action, rec.pid, rec.process_name),
+                                    "WARNING",
+                                    source="%d [%s]" % (rec.pid, rec.process_name),
+                                )
+
                         if anomaly_result.is_anomaly and change_graph.has_data():
                             report_path, png_p = self._generate_incident_artifacts(
                                 change_graph, status, anomaly_result, total,
@@ -392,7 +409,9 @@ class FileMonitor:
                                 report_path, png_p, status, anomaly_result,
                                 created, modified, deleted, total,
                                 events=events, rich_dash=rich_dash,
+                                reaction_records=reaction_records,
                             )
+
                         rich_dash.update(
                             scanned=scanned,
                             created=created,
@@ -402,12 +421,9 @@ class FileMonitor:
                             threshold_exceeded=threshold_exceeded,
                             no_baseline=not has_baseline,
                         )
-                        for e in events:
+                        for e, proc_info in resolved_events:
                             msg = f"{e.event_type.value}: {e.file_path}"
-                            if e.event_type in (EventType.MODIFIED, EventType.CREATED):
-                                source = self._get_process_by_file(e.file_path)
-                            else:
-                                source = "0x???? [—]"
+                            source = proc_info.format_source()
                             rich_dash.add_log(msg, e.severity.value, source=source)
                         live.update(rich_dash.get_renderable(), refresh=True)
                         last_scan_time = now
@@ -491,6 +507,10 @@ class FileMonitor:
                     else:
                         status = self.anomaly_engine.threat_level_for_dashboard()
                     self._session_final_status = status
+
+                    resolved_events = self._resolve_all_events(events)
+                    reaction_records = self._react_to_events(resolved_events)
+
                     if anomaly_result.is_anomaly and change_graph.has_data():
                         report_path, png_p = self._generate_incident_artifacts(
                             change_graph, status, anomaly_result, change_count,
@@ -499,6 +519,7 @@ class FileMonitor:
                             report_path, png_p, status, anomaly_result,
                             created, modified, deleted, change_count,
                             events=events,
+                            reaction_records=reaction_records,
                         )
                     terminal_graph.update(change_count)
                     dashboard.update(

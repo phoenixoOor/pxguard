@@ -36,6 +36,7 @@ class IncidentContext:
     timestamp_str: str = ""
     has_graph: bool = False
     changed_files: list[dict] = field(default_factory=list)
+    reaction_actions: list[dict] = field(default_factory=list)
     report_body: str = ""
 
     @property
@@ -84,6 +85,7 @@ class ReportBuilder:
             has_graph=ctx.has_graph,
             graph_cid=GRAPH_CID,
             changed_files=ctx.changed_files,
+            reaction_actions=ctx.reaction_actions,
             generated_at=ctx.generated_at,
         )
         logger.debug("[REPORT] HTML email rendered (%d chars)", len(html))
@@ -113,6 +115,15 @@ class ReportBuilder:
                 lines.append(f"  {f.get('event', '?'):10s} {f.get('path', '?')}")
             if len(ctx.changed_files) > 50:
                 lines.append(f"  ... and {len(ctx.changed_files) - 50} more")
+        if ctx.reaction_actions:
+            lines.append("")
+            lines.append(f"Automated Actions ({len(ctx.reaction_actions)}):")
+            for a in ctx.reaction_actions:
+                status = "OK" if a.get("success") else "FAILED"
+                lines.append(
+                    "  %s pid=%s name=%s file=%s — %s"
+                    % (a.get("action", "?"), a.get("pid", "?"), a.get("process_name", "?"), a.get("file_path", "?"), status)
+                )
         if ctx.report_body:
             lines.append("")
             lines.append(ctx.report_body)

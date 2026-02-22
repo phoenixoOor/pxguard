@@ -127,6 +127,26 @@
               </table>
               {% endif %}
 
+              <!-- Automated reaction actions -->
+              {% if reaction_actions %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">
+                <tr>
+                  <td style="padding:8px 0 6px 0;color:#f85149;font-size:14px;font-weight:600;border-bottom:1px solid #30363d;">
+                    &#x26a0; Automated Actions ({{ reaction_actions|length }})
+                  </td>
+                </tr>
+                {% for a in reaction_actions %}
+                <tr>
+                  <td style="padding:5px 12px;color:#c9d1d9;font-size:13px;font-family:'SFMono-Regular',Consolas,monospace;border-bottom:1px solid #161b22;">
+                    <span style="color:{% if a.success %}#3fb950{% else %}#f85149{% endif %};font-weight:600;">{{ a.action }}</span>
+                    &nbsp; pid={{ a.pid }} &nbsp; {{ a.process_name }}
+                    {% if a.detail %}<br><span style="color:#8b949e;font-size:11px;">{{ a.detail }}</span>{% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </table>
+              {% endif %}
+
               <!-- Explanation -->
               <p style="color:#8b949e;font-size:13px;line-height:1.6;margin:16px 0 0 0;">
                 PXGuard detected file activity that exceeded the configured threshold.

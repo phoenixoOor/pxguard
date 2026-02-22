@@ -51,5 +51,11 @@ paths:
   # graph_format: html   # interactive Plotly (change_graph.html); use "png" for static
   # report_summary.txt is written to the same directory as alert log_path
 
+reaction:
+  enabled: false
+  # When true, PXGuard will attempt to terminate processes responsible
+  # for CRITICAL file events (requires psutil and sufficient privileges).
+  # Protected system processes (systemd, sshd, etc.) are never terminated.
+
 simulator:
   allowed_root: ./test_assets

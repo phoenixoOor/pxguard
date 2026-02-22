@@ -111,6 +111,9 @@ def load_config(config_path: Path, project_root: Optional[Path] = None) -> dict[
     if graph_format not in ("html", "png"):
         graph_format = "html"
 
+    reaction_raw = raw.get("reaction", {})
+    reaction_enabled = bool(reaction_raw.get("enabled", False))
+
     simulator_raw = raw.get("simulator", {})
     allowed_root = simulator_raw.get("allowed_root", "./test_assets")
 
@@ -146,6 +149,7 @@ def load_config(config_path: Path, project_root: Optional[Path] = None) -> dict[
         "attach_visuals": attach_visuals,
         "baseline_path": resolve(baseline_file),
         "simulator_allowed_root": resolve(allowed_root),
+        "reaction_enabled": reaction_enabled,
         "graph_format": graph_format,
         "report_summary_path": report_summary_path,
     }
