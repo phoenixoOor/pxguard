@@ -147,6 +147,38 @@
               </table>
               {% endif %}
 
+              <!-- Process trees -->
+              {% if process_trees %}
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" style="margin:16px 0;">
+                <tr>
+                  <td style="padding:8px 0 6px 0;color:#58a6ff;font-size:14px;font-weight:600;border-bottom:1px solid #30363d;">
+                    &#x1f333; Process Trees ({{ process_trees|length }})
+                  </td>
+                </tr>
+                {% for pt in process_trees %}
+                <tr>
+                  <td style="padding:8px 12px;border-bottom:1px solid #21262d;">
+                    <div style="margin:0 0 4px 0;">
+                      <span style="color:{% if pt.analysis and pt.analysis.suspicious %}#f85149{% else %}#3fb950{% endif %};font-weight:600;font-size:13px;">
+                        {% if pt.analysis and pt.analysis.suspicious %}&#x26a0; SUSPICIOUS{% else %}&#x2714; CLEAN{% endif %}
+                      </span>
+                      &nbsp;
+                      <span style="color:#8b949e;font-size:12px;">{{ pt.event_type }} &mdash; {{ pt.file_path }}</span>
+                    </div>
+                    <div style="color:#c9d1d9;font-size:12px;font-family:'SFMono-Regular',Consolas,monospace;background-color:#0d1117;padding:8px 10px;border-radius:4px;border:1px solid #21262d;white-space:pre;overflow-x:auto;">{{ pt.tree_full }}</div>
+                    {% if pt.analysis and pt.analysis.reasons %}
+                    <div style="margin:4px 0 0 0;">
+                      {% for reason in pt.analysis.reasons %}
+                      <div style="color:#f85149;font-size:11px;padding:2px 0;">&#x25cf; {{ reason }}</div>
+                      {% endfor %}
+                    </div>
+                    {% endif %}
+                  </td>
+                </tr>
+                {% endfor %}
+              </table>
+              {% endif %}
+
               <!-- Explanation -->
               <p style="color:#8b949e;font-size:13px;line-height:1.6;margin:16px 0 0 0;">
                 PXGuard detected file activity that exceeded the configured threshold.

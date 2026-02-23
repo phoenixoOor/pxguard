@@ -37,6 +37,7 @@ class IncidentContext:
     has_graph: bool = False
     changed_files: list[dict] = field(default_factory=list)
     reaction_actions: list[dict] = field(default_factory=list)
+    process_trees: list[dict] = field(default_factory=list)
     report_body: str = ""
 
     @property
@@ -86,6 +87,7 @@ class ReportBuilder:
             graph_cid=GRAPH_CID,
             changed_files=ctx.changed_files,
             reaction_actions=ctx.reaction_actions,
+            process_trees=ctx.process_trees,
             generated_at=ctx.generated_at,
         )
         logger.debug("[REPORT] HTML email rendered (%d chars)", len(html))
@@ -124,6 +126,18 @@ class ReportBuilder:
                     "  %s pid=%s name=%s file=%s — %s"
                     % (a.get("action", "?"), a.get("pid", "?"), a.get("process_name", "?"), a.get("file_path", "?"), status)
                 )
+        if ctx.process_trees:
+            lines.append("")
+            lines.append(f"Process Trees ({len(ctx.process_trees)}):")
+            for pt in ctx.process_trees:
+                analysis = pt.get("analysis", {})
+                marker = " [SUSPICIOUS]" if analysis.get("suspicious") else ""
+                lines.append(f"  {pt.get('event_type', '?')} {pt.get('file_path', '?')}{marker}")
+                lines.append(f"    Chain: {pt.get('tree_oneline', '?')}")
+                if analysis.get("reasons"):
+                    for reason in analysis["reasons"]:
+                        lines.append(f"    ! {reason}")
+                lines.append("")
         if ctx.report_body:
             lines.append("")
             lines.append(ctx.report_body)

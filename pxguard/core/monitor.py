@@ -1,10 +1,12 @@
 """
 PXGuard - Monitoring engine.
 
-Pipeline:  monitoring → process_resolver → analyzer → reaction_engine → alert_service
+Pipeline:  monitoring → process_resolver → process_tree → parent_analyzer
+           → reaction_engine → alert_service
 
 Orchestrates periodic scanning, comparison, threshold checks, process
-resolution, automated reaction (on CRITICAL), and alerting/email.
+resolution, process-tree construction, suspicious-parent detection,
+automated reaction (on CRITICAL), and alerting/email.
 """
 
 import contextlib
@@ -21,7 +23,9 @@ from pxguard.core.dashboard import Dashboard
 from pxguard.core.graph import ChangeGraph, TerminalGraph
 from pxguard.core.models import EventType, Severity
 from pxguard.core.event_capture import EventCaptureThread, ProcessCaptureCache
+from pxguard.core.parent_analyzer import ParentAnalyzer, ParentAnalysis, CLEAN_ANALYSIS
 from pxguard.core.process_resolver import ProcessResolver, ProcessInfo, UNKNOWN_PROCESS
+from pxguard.core.process_tree_builder import ProcessTreeBuilder, ProcessTree, EMPTY_TREE
 from pxguard.core.reaction_engine import ReactionEngine
 from pxguard.core.report import write_session_report
 from pxguard.core.report_engine import generate_security_report
@@ -137,6 +141,8 @@ class FileMonitor:
             )
         )
         self._resolver = ProcessResolver()
+        self._tree_builder = ProcessTreeBuilder()
+        self._parent_analyzer = ParentAnalyzer()
         self._capture_cache = ProcessCaptureCache(ttl=float(self.scan_interval * 3))
         self._capture = EventCaptureThread(
             directories=[str(d) for d in dirs],
@@ -187,6 +193,69 @@ class FileMonitor:
                     info = cached
             resolved.append((e, info))
         return resolved
+
+    def _build_trees_and_analyze(
+        self,
+        resolved_events: list[tuple],
+    ) -> list[tuple]:
+        """
+        Pipeline stages: process_tree + parent_analyzer.
+        For each resolved event:
+          1. Build the process tree (parent chain).
+          2. Analyze for suspicious parents.
+          3. If suspicious → escalate severity to CRITICAL.
+        Returns list of (event, ProcessInfo, ProcessTree, ParentAnalysis).
+        """
+        enriched: list[tuple] = []
+        for e, proc_info in resolved_events:
+            if proc_info.resolved:
+                tree = self._tree_builder.build_from_info(proc_info.pid, proc_info.ppid)
+                analysis = self._parent_analyzer.analyze(tree)
+            else:
+                tree = EMPTY_TREE
+                analysis = CLEAN_ANALYSIS
+
+            if analysis.escalate_to_critical and e.severity != Severity.CRITICAL:
+                logger.warning(
+                    "[PARENT] Escalating %s to CRITICAL: %s",
+                    e.file_path, analysis.format_log(),
+                )
+                e.severity = Severity.CRITICAL
+                e.metadata["parent_escalated"] = True
+                e.metadata["parent_reasons"] = analysis.reasons
+
+            if analysis.suspicious:
+                logger.info(
+                    "[PARENT] %s tree=%s",
+                    analysis.format_log(), tree.format_oneline(),
+                )
+
+            enriched.append((e, proc_info, tree, analysis))
+        return enriched
+
+    @staticmethod
+    def _collect_tree_data(enriched_events: list[tuple]) -> list[dict]:
+        """
+        Collect process tree + parent analysis data for email/report inclusion.
+        Only includes events that have a non-empty tree.
+        """
+        trees: list[dict] = []
+        seen_pids: set[int] = set()
+        for e, proc_info, tree, analysis in enriched_events:
+            if tree.empty or not proc_info.resolved:
+                continue
+            if proc_info.pid in seen_pids:
+                continue
+            seen_pids.add(proc_info.pid)
+            trees.append({
+                "file_path": e.file_path,
+                "event_type": e.event_type.value,
+                "tree_oneline": tree.format_oneline(),
+                "tree_full": tree.format_tree(),
+                "tree_nodes": tree.to_list(),
+                "analysis": analysis.to_dict(),
+            })
+        return trees
 
     def _react_to_events(self, resolved_events: list[tuple]) -> list:
         """
@@ -256,6 +325,7 @@ class FileMonitor:
         events: Optional[list] = None,
         rich_dash: Optional[Any] = None,
         reaction_records: Optional[list] = None,
+        process_trees: Optional[list[dict]] = None,
     ) -> None:
         """Send incident email via notifier. Log warning on failure, push to dashboard."""
         if not self._notifier:
@@ -288,6 +358,7 @@ class FileMonitor:
             peak_changes=self._session_max_changes,
             changed_files=changed_files,
             reaction_actions=reaction_data,
+            process_trees=process_trees or [],
         )
         if not ok and rich_dash is not None:
             try:
@@ -408,8 +479,10 @@ class FileMonitor:
                         )
 
                         resolved_events = self._resolve_all_events(events)
+                        enriched_events = self._build_trees_and_analyze(resolved_events)
 
-                        reaction_records = self._react_to_events(resolved_events)
+                        react_input = [(e, pi) for e, pi, _t, _a in enriched_events]
+                        reaction_records = self._react_to_events(react_input)
                         for rec in reaction_records:
                             if rec.success:
                                 rich_dash.add_log(
@@ -417,6 +490,8 @@ class FileMonitor:
                                     "WARNING",
                                     source="%d [%s]" % (rec.pid, rec.process_name),
                                 )
+
+                        tree_data = self._collect_tree_data(enriched_events)
 
                         if anomaly_result.is_anomaly and change_graph.has_data():
                             report_path, png_p = self._generate_incident_artifacts(
@@ -427,6 +502,7 @@ class FileMonitor:
                                 created, modified, deleted, total,
                                 events=events, rich_dash=rich_dash,
                                 reaction_records=reaction_records,
+                                process_trees=tree_data,
                             )
 
                         rich_dash.update(
@@ -438,9 +514,11 @@ class FileMonitor:
                             threshold_exceeded=threshold_exceeded,
                             no_baseline=not has_baseline,
                         )
-                        for e, proc_info in resolved_events:
+                        for e, proc_info, tree, analysis in enriched_events:
                             msg = f"{e.event_type.value}: {e.file_path}"
                             source = proc_info.format_source()
+                            if analysis.suspicious:
+                                msg += " [SUSPICIOUS PARENT]"
                             rich_dash.add_log(msg, e.severity.value, source=source)
                         live.update(rich_dash.get_renderable(), refresh=True)
                         last_scan_time = now
@@ -526,7 +604,12 @@ class FileMonitor:
                     self._session_final_status = status
 
                     resolved_events = self._resolve_all_events(events)
-                    reaction_records = self._react_to_events(resolved_events)
+                    enriched_events = self._build_trees_and_analyze(resolved_events)
+
+                    react_input = [(e, pi) for e, pi, _t, _a in enriched_events]
+                    reaction_records = self._react_to_events(react_input)
+
+                    tree_data = self._collect_tree_data(enriched_events)
 
                     if anomaly_result.is_anomaly and change_graph.has_data():
                         report_path, png_p = self._generate_incident_artifacts(
@@ -537,6 +620,7 @@ class FileMonitor:
                             created, modified, deleted, change_count,
                             events=events,
                             reaction_records=reaction_records,
+                            process_trees=tree_data,
                         )
                     terminal_graph.update(change_count)
                     dashboard.update(
